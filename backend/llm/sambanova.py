@@ -8,7 +8,7 @@ LLAMA_405B = "Meta-Llama-3.1-405B-Instruct"
 def query_samba_nova(input_text: str, sys: str, model_name: str, temperature: float) -> str:
     model = get_config()['model']
     try:
-        url = "https://api.sambanova.ai/v1/chat/completions"
+        url = "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
         messages = []
         if sys:
             messages.append({"role": "system", "content": sys})

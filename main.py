@@ -3,7 +3,7 @@ from flask import Flask, send_from_directory
 from flask_cors import CORS
 import logging
 
-from backend.rest_handler.character import get_local_characters, get_new_characters, get_random_appearance, put_characters
+# 旧的角色处理器已删除
 from backend.rest_handler.image import generate_images, get_local_images, generate_single_image
 from backend.rest_handler.init import get_initial, get_novel_fragments, load_novel, save_combined_fragments, save_novel, \
     save_prompt, load_prompt, get_model_config, save_model_config
@@ -70,22 +70,7 @@ def api_get_initial():
 def api_generate_audio_files():
     return generate_audio_files()
 
-# character
-@app.route('/api/novel/characters', methods=['GET']) # 生成新角色
-def api_get_new_characters():
-    return get_new_characters()
-
-@app.route('/api/novel/characters/local', methods=['GET']) # 获取本地角色
-def api_get_local_characters():
-    return get_local_characters()
-
-@app.route('/api/novel/characters', methods=['PUT']) # 保存角色
-def api_put_characters():
-    return put_characters()
-
-@app.route('/api/novel/characters/random', methods=['GET'])  # 生成随机角色
-def api_get_random_appearance():
-    return get_random_appearance()
+# 旧的角色接口已删除，现在使用新的角色信息保存接口
 
 # 获取小说文本
 @app.route('/api/novel/load', methods=['GET'])
@@ -125,6 +110,90 @@ def api_get_model_config():
 def api_save_model_config():
     return save_model_config()
 
+# 角色信息相关接口
+@app.route('/api/save/character/info', methods=['POST'])
+def api_save_character_info():
+    from backend.rest_handler.character_info import save_character_info
+    return save_character_info()
+
+@app.route('/api/load/character/info', methods=['GET'])
+def api_load_character_info():
+    from backend.rest_handler.character_info import load_character_info
+    return load_character_info()
+
+@app.route('/api/save/story/info', methods=['POST'])
+def api_save_story_info():
+    from backend.rest_handler.character_info import save_story_info
+    return save_story_info()
+
+@app.route('/api/load/story/info', methods=['GET'])
+def api_load_story_info():
+    from backend.rest_handler.character_info import load_character_info
+    return load_character_info()
+
+# 画面描述相关接口
+@app.route('/api/save/scene/descriptions', methods=['POST'])
+def api_save_scene_descriptions():
+    from backend.rest_handler.scene_description import save_scene_descriptions
+    return save_scene_descriptions()
+
+@app.route('/api/load/scene/descriptions', methods=['GET'])
+def api_load_scene_descriptions():
+    from backend.rest_handler.scene_description import load_scene_descriptions
+    return load_scene_descriptions()
+
+@app.route('/api/save/scene/description', methods=['POST'])
+def api_save_single_scene_description():
+    from backend.rest_handler.scene_description import save_single_scene_description
+    return save_single_scene_description()
+
+# 分镜脚本相关接口
+@app.route('/api/save/storyboards', methods=['POST'])
+def api_save_storyboards():
+    from backend.rest_handler.scene_description import save_storyboards
+    return save_storyboards()
+
+@app.route('/api/load/storyboards', methods=['GET'])
+def api_load_storyboards():
+    from backend.rest_handler.scene_description import load_storyboards
+    return load_storyboards()
+
+@app.route('/api/save/complete/storyboard', methods=['POST'])
+def api_save_complete_storyboard():
+    from backend.rest_handler.scene_description import save_complete_storyboard_data
+    return save_complete_storyboard_data()
+
+@app.route('/api/load/complete/storyboard', methods=['GET'])
+def api_load_complete_storyboard():
+    from backend.rest_handler.scene_description import load_complete_storyboard_data
+    return load_complete_storyboard_data()
+
+@app.route('/api/load/character/images', methods=['GET'])
+def api_load_character_images():
+    from backend.rest_handler.scene_description import load_character_images
+    return load_character_images()
+
+@app.route('/api/save/character/image', methods=['POST'])
+def api_save_character_image():
+    from backend.rest_handler.scene_description import save_character_image
+    return save_character_image()
+
+@app.route('/api/upload/character/image', methods=['POST'])
+def api_upload_character_image():
+    from backend.rest_handler.scene_description import upload_character_image
+    return upload_character_image()
+
+# 图片保存相关接口
+@app.route('/api/save/image', methods=['POST'])
+def api_save_image():
+    from backend.rest_handler.image_saver import save_image_to_temp
+    return save_image_to_temp()
+
+@app.route('/api/load/images', methods=['GET'])
+def api_load_images():
+    from backend.rest_handler.image_saver import load_images_from_temp
+    return load_images_from_temp()
+
 @app.route('/videos/<path:filename>')
 def serve_videos(filename):
     return send_from_directory(video_dir, filename)
@@ -138,6 +207,21 @@ def serve_images(filename):
         logging.error(f"File not found: {file_path}")
         return "File not found", 404
     return send_from_directory(image_dir, filename)
+
+@app.route('/temp/<path:filename>')
+def serve_temp_files(filename):
+    logging.info(f"Requested temp file: {filename}")
+    temp_dir = os.path.join(os.getcwd(), 'temp')
+    file_path = os.path.join(temp_dir, filename)
+    logging.debug(f"Full temp path: {file_path}")
+    if not os.path.exists(file_path):
+        logging.error(f"Temp file not found: {file_path}")
+        return "File not found", 404
+    
+    # 获取文件所在的目录和文件名
+    directory = os.path.dirname(file_path)
+    filename_only = os.path.basename(file_path)
+    return send_from_directory(directory, filename_only)
 
 if __name__ == '__main__':
     logging.info(f"Current working directory:{os.getcwd()}")

@@ -12,13 +12,15 @@ export default function Component() {
   const [address3, setAddress3] = useState('')
   const [address3Type, setAddress3Type] = useState('stable_diffusion_web_ui')
   const [comfyuiNodeApi, setComfyuiNodeApi] = useState('')
+  const [easyaiApiKey, setEasyaiApiKey] = useState('')
   const [savingStates, setSavingStates] = useState({
     url:false,
     apikey: false,
     model:false,
     address2: false,
     address3: false,
-    comfyuiNodeApi: false
+    comfyuiNodeApi: false,
+    easyaiApiKey: false
   })
 
   useEffect(() => {
@@ -38,6 +40,7 @@ export default function Component() {
         setAddress3(data.address3 || '')
         setAddress3Type(data.address3Type || 'stable_diffusion_web_ui')
         setComfyuiNodeApi(JSON.stringify(data.comfyuiNodeApi) || '')
+        setEasyaiApiKey(data.easyaiApiKey || '')
       } else {
         showToast(`读取本地配置出错`)
         console.error('Failed to fetch addresses')
@@ -48,7 +51,7 @@ export default function Component() {
     }
   }
 
-  const saveAddress = async (key: 'url' | 'apikey' | 'model' | 'address2' | 'address3' | 'comfyuiNodeApi', value: string) => {
+  const saveAddress = async (key: 'url' | 'apikey' | 'model' | 'address2' | 'address3' | 'comfyuiNodeApi' | 'easyaiApiKey', value: string) => {
     setSavingStates(prev => ({ ...prev, [key]: true }))
     try {
       const response = await fetch('http://localhost:1198/api/model/config', {
@@ -251,6 +254,29 @@ export default function Component() {
               </div>
           )}
           <p className="text-sm text-gray-600">地址可以是本地的，也可以是云端的，如果使用你自己的comfyuiapi，需要在节点里填prompt的地方加上占位符$prompt$，</p>
+        </div>
+        <div className="space-y-2">
+          <label htmlFor="easyaiApiKey" className="block text-sm font-medium text-gray-800">
+            EasyAI API Key
+          </label>
+          <div className="flex space-x-2">
+            <input
+                id="easyaiApiKey"
+                type="text"
+                value={easyaiApiKey}
+                onChange={(e) => setEasyaiApiKey(e.target.value)}
+                placeholder="输入你的EasyAI API Key"
+                className="flex-grow px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900 placeholder-gray-500"
+            />
+            <button
+                onClick={() => saveAddress('easyaiApiKey', easyaiApiKey)}
+                disabled={savingStates.easyaiApiKey}
+                className="px-4 py-2 bg-black text-white rounded-md shadow-sm hover:bg-gray-800 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {savingStates.easyaiApiKey ? '保存中...' : '保存'}
+            </button>
+          </div>
+          <p className="text-sm text-gray-600">用于EasyAI图片生成服务的API密钥，将替代原有的图片生成接口</p>
         </div>
       </div>
       <ToastContainer/>

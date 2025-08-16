@@ -2,13 +2,12 @@
 
 import { useState } from "react";
 import AIImageGenerator from "./image";
-import TextEditor from "@/app/text";
-import CharacterExtractor from "@/app/character";
+
 import VideoGenerator from "./video";
 import Models from "@/app/init";
 
 export default function Home() {
-    const [activeTab, setActiveTab] = useState("models");
+    const [activeTab, setActiveTab] = useState("image");
 
     return (
         <div style={styles.container}>
@@ -16,12 +15,8 @@ export default function Home() {
                 <div style={styles.item} onClick={() => setActiveTab("models")}>
                     初始化
                 </div>
-                <div style={styles.item} onClick={() => setActiveTab("text")}>
-                    保存文本
-                </div>
-                <div style={styles.item} onClick={() => setActiveTab("character")}>
-                    提取角色
-                </div>
+
+
                 <div style={styles.item} onClick={() => setActiveTab("image")}>
                     提取图像
                 </div>
@@ -30,8 +25,7 @@ export default function Home() {
                 </div>
             </div>
             <div style={styles.content}>
-                {activeTab === "text" && <TextEditor/>}
-                {activeTab === "character" && <CharacterExtractor/>}
+
                 {activeTab === "image" && <AIImageGenerator/>}
                 {activeTab === "video" && <VideoGenerator/>}
                 {activeTab === "models" && <Models/>}

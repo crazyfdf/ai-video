@@ -1,0 +1,6 @@
+.history
+__pycache__
+.next
+node_modules
+*.md
+temp
