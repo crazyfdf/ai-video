@@ -8,7 +8,6 @@ import edge_tts
 from backend.util.constant import audio_dir, novel_fragments_dir
 from backend.util.file import read_lines_from_directory
 
-
 # async def by_edge_tts():
 #     if os.path.exists(audio_dir):
 #         shutil.rmtree(audio_dir)
@@ -28,6 +27,7 @@ from backend.util.file import read_lines_from_directory
 #         except Exception as e:
 #             print(f"TTS conversion failed for line {i}, error: {e}")
 
+
 async def by_edge_tts():
     if os.path.exists(audio_dir):
         shutil.rmtree(audio_dir)
@@ -43,13 +43,12 @@ async def by_edge_tts():
         for i, line in enumerate(lines):
             executor.submit(convert_text_to_speech, line, audio_dir, i)
 
+
 def convert_text_to_speech(line, audio_dir, i):
     try:
         # zh-CN-YunxiNeural  YunjianNeural  rate='25%' YunyangNeural
         communicate = edge_tts.Communicate(
-            text=line,
-            voice="zh-CN-XiaoxiaoNeural",
-            rate="+35%"
+            text=line, voice="zh-CN-XiaoxiaoNeural", rate="+35%"
         )
 
         full_path = os.path.join(audio_dir, f"{i}.mp3")

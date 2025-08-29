@@ -4,15 +4,24 @@ import { buildImageUrl } from '../utils/helpers';
 import { showToast } from '../app/toast';
 import { ReactSelectLoraSelector } from './ReactSelectLoraSelector';
 import { MultiImageSelector } from './MultiImageSelector';
+import ImageDimensionSelector from './ImageDimensionSelector';
+import { ASPECT_RATIOS, QUALITY_OPTIONS, getDefaultImageConfig, getDimensionsByConfig } from '../utils/imageConfig';
+
+
 
 interface SubjectCreationModalProps {
   isOpen: boolean;
   mode: 'character' | 'scene' | null;
   onClose: () => void;
-  onCreateCharacter: (name: string, description: string, images: string[]) => Promise<any>;
-  onCreateScene: (name: string, description: string, images: string[]) => Promise<any>;
+  onCreateCharacter: (name: string, description: string, images: string[], lora?: string) => Promise<any>;
+  onCreateScene: (name: string, description: string, images: string[], lora?: string) => Promise<any>;
   loraList?: string[];
   isLoadingLora?: boolean;
+  currentProject?: any;
+  prefilledData?: {
+    name?: string;
+    description?: string;
+  } | null;
 }
 
 export const SubjectCreationModal: React.FC<SubjectCreationModalProps> = ({
@@ -22,12 +31,21 @@ export const SubjectCreationModal: React.FC<SubjectCreationModalProps> = ({
   onCreateCharacter,
   onCreateScene,
   loraList = [],
-  isLoadingLora = false
+  isLoadingLora = false,
+  currentProject,
+  prefilledData = null
 }) => {
   const [selectedLora, setSelectedLora] = useState<string>('');
   const [isGeneratingImage, setIsGeneratingImage] = useState<boolean>(false);
   const [generatedImages, setGeneratedImages] = useState<string[]>([]);
   const [selectedImage, setSelectedImage] = useState<string>('');
+  
+  // 使用项目默认配置
+  const defaultConfig = getDefaultImageConfig();
+  
+  // 尺寸设置状态
+  const [aspectRatio, setAspectRatio] = useState(defaultConfig.aspectRatio);
+  const [quality, setQuality] = useState(defaultConfig.quality);
   
   // 重置状态当模态框关闭时
   useEffect(() => {
@@ -36,8 +54,28 @@ export const SubjectCreationModal: React.FC<SubjectCreationModalProps> = ({
       setGeneratedImages([]);
       setSelectedImage('');
       setIsGeneratingImage(false);
+      setAspectRatio(defaultConfig.aspectRatio);
+      setQuality(defaultConfig.quality);
     }
-  }, [isOpen]);
+  }, [isOpen, defaultConfig.aspectRatio, defaultConfig.quality]);
+
+  // 处理预填充数据
+  useEffect(() => {
+    if (isOpen && prefilledData) {
+      // 等待DOM元素渲染完成后填充数据
+      setTimeout(() => {
+        const nameInput = document.getElementById('subject-name-input') as HTMLInputElement;
+        const descInput = document.getElementById('subject-description-input') as HTMLTextAreaElement;
+        
+        if (nameInput && prefilledData.name) {
+          nameInput.value = prefilledData.name;
+        }
+        if (descInput && prefilledData.description) {
+          descInput.value = prefilledData.description;
+        }
+      }, 100);
+    }
+  }, [isOpen, prefilledData]);
 
   if (!isOpen || !mode) return null;
 
@@ -58,9 +96,9 @@ export const SubjectCreationModal: React.FC<SubjectCreationModalProps> = ({
     
     try {
       if (mode === 'character') {
-        await onCreateCharacter(name, description, allImages);
+        await onCreateCharacter(name, description, allImages, selectedLora);
       } else {
-        await onCreateScene(name, description, allImages);
+        await onCreateScene(name, description, allImages, selectedLora);
       }
       
       onClose();
@@ -94,17 +132,23 @@ export const SubjectCreationModal: React.FC<SubjectCreationModalProps> = ({
         throw new Error('EasyAI API Key未配置');
       }
 
+      // 使用当前选择的尺寸参数
+      const { width, height } = getDimensionsByConfig(aspectRatio, quality);
+
       // 构建提示词
       const basePrompt = 'masterpiece, best quality, ultra detailed, 8k, photorealistic';
       const finalPrompt = `${basePrompt}, ${description}`;
 
-      // 使用带LoRA的生成接口，生成4张图片
-      const result = await APIService.generateImageWithLora(finalPrompt, API_KEY, selectedLora, 4);
+      // 根据模式动态设置model参数
+      const model = mode === 'character' ? '角色形象制作' : '场景制作';
+      
+      // 使用带LoRA的生成接口，生成4张图片，使用选定的尺寸
+      const result = await APIService.generateImageWithLora(finalPrompt, API_KEY, selectedLora, 4, width, height, model);
       
       console.log('Subject image generation result:', result);
       
       if (result && result.data && Array.isArray(result.data) && result.data.length > 0) {
-        const imageUrls = result.data.map((item: any) => {
+        const imageUrls = result.data.map((item: any): string | null => {
           // 处理不同的数据结构
           if (typeof item === 'string') {
             return item; // 直接是URL字符串
@@ -116,7 +160,7 @@ export const SubjectCreationModal: React.FC<SubjectCreationModalProps> = ({
             console.warn('Unknown image item structure:', item);
             return null;
           }
-        }).filter(url => url !== null);
+        }).filter((url: string | null): url is string => url !== null);
         
         console.log('Extracted image URLs:', imageUrls);
         
@@ -210,6 +254,16 @@ export const SubjectCreationModal: React.FC<SubjectCreationModalProps> = ({
             isLoading={isLoadingLora}
             placeholder="搜索或选择LoRA模型..."
             className="subject-modal-lora-selector"
+          />
+
+          {/* 图片尺寸设置 */}
+          <ImageDimensionSelector
+            aspectRatio={aspectRatio}
+            quality={quality}
+            onAspectRatioChange={setAspectRatio}
+            onQualityChange={setQuality}
+            buttonText="主体图片尺寸设置"
+            currentProject={currentProject}
           />
 
           {/* 图片生成和上传区域 */}

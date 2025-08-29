@@ -1,6 +1,6 @@
 {
     "url": "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
-    "model": "doubao-seed-1-6-flash-250715",
+    "model": "deepseek-v3-1-250821",
     "apikey": "7ac83331-f9fc-452e-a8ed-e14b54732057",
     "address2": "sk-vwijghxollhmhvyjuviwzunkioyxuxalrexqhbvijqafpkfd",
     "address3": "http://127.0.0.1:8188",

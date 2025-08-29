@@ -11,6 +11,11 @@ export interface Character {
   englishPrompt?: string;
   selectedLora?: string;
   tempImages?: string[]; // 临时生成的图片，用于用户选择
+  customAspectRatio?: string; // 自定义比例覆盖项目默认
+  customQuality?: string; // 自定义画质覆盖项目默认
+  voiceFile?: string; // 音色文件路径
+  voiceFileName?: string; // 音色文件名
+  voiceDescription?: string; // 音色描述
 }
 
 // 主体类型
@@ -19,9 +24,26 @@ export interface Subject {
   name: string;
   description: string;
   tag: string;
-  images: string[];
+  images: string[]; // 保持向后兼容
+  subjectImages?: string[]; // 主体图片
+  referenceImages?: string[]; // 参考图片
   createdAt: string;
   selectedLora?: string;
+  customAspectRatio?: string; // 自定义比例覆盖项目默认
+  customQuality?: string; // 自定义画质覆盖项目默认
+}
+
+// 元素位置布局类型
+export interface ElementLayout {
+  element_type: string;
+  name: string;
+  prompt: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  lora?: string;
+  photo?: string;
 }
 
 // 分镜元素类型
@@ -31,6 +53,7 @@ export interface StoryboardElement {
   character_subjects?: string[];
   scene_subjects?: string[];
   scene_prompt?: string;
+  elements_layout?: ElementLayout[]; // 新增：元素位置布局数据
 }
 
 // 场景数据类型
@@ -39,6 +62,8 @@ export interface SceneData {
   novel_fragment: string;
   storyboard: string;
   wan22_prompt: string;
+  character_dialogue?: string;
+  sound_effects?: string;
   generated_at?: string;
 }
 
@@ -48,7 +73,6 @@ export interface CompleteStoryboardData {
   generated_at: string;
   story_summary: string;
   characters: Character[];
-  raw_ai_response: string;
   scenes: SceneData[];
 }
 
@@ -299,6 +323,11 @@ export interface DialogueGenerationRequest {
   storyContext: string;
   emotionalTone?: string;
   sceneDuration?: string;
+  characterVoices?: Array<{
+    name: string;
+    voiceDescription?: string;
+    voiceFileName?: string;
+  }>;
   projectName?: string;
 }
 

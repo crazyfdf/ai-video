@@ -1,8 +1,7 @@
 import asyncio
-import base64
 import copy
-import logging
 import json
+import logging
 import os
 import random
 
@@ -11,9 +10,10 @@ import requests
 from backend.util.constant import image_dir
 from backend.util.file import get_config
 
+
 async def generate_image(lines):
-    url = get_config()['address3']
-    api = get_config()['comfyuiNodeApi']
+    url = get_config()["address3"]
+    api = get_config()["comfyuiNodeApi"]
     task_id_to_file = {}
     task_status = {}
     for i, p in enumerate(lines):
@@ -28,8 +28,8 @@ async def generate_image(lines):
 
 
 async def generate_single_image(content, i):
-    url = get_config()['address3']
-    api = get_config()['comfyuiNodeApi']
+    url = get_config()["address3"]
+    api = get_config()["comfyuiNodeApi"]
     task_id_to_file = {}
     task_status = {}
 
@@ -37,6 +37,7 @@ async def generate_single_image(content, i):
     task_id_to_file[prompt_id] = i
     task_status[prompt_id] = False
     await monitor_tasks(task_id_to_file, task_status, url)
+
 
 async def monitor_tasks(task_id_to_file, task_status, url):
     while len(task_id_to_file) > 0:
@@ -94,8 +95,9 @@ def prompt_history(prompt_id, url, order):
         logging.error(e)
         raise
 
+
 def generate_random_seed(copyed_data, p):
-    random_number = random.randint(1, 10 ** 15 - 1)
+    random_number = random.randint(1, 10**15 - 1)
     if isinstance(copyed_data, dict):
         for key, value in copyed_data.items():
             if key == "noise_seed":
@@ -107,6 +109,7 @@ def generate_random_seed(copyed_data, p):
             if isinstance(item, (dict, list)):
                 generate_random_seed(item, p)
     return copyed_data
+
 
 def replace_prompt_in_map(copyed_data, p):
     target_value = "$prompt$"
@@ -123,6 +126,7 @@ def replace_prompt_in_map(copyed_data, p):
             elif isinstance(item, str) and target_value in item:
                 copyed_data[index] = item.replace(target_value, p)
     return copyed_data
+
 
 def post_prompt(prompt, apiRaw, url):
     try:
@@ -151,6 +155,3 @@ def post_prompt(prompt, apiRaw, url):
         logging.error(f"Failed to decode JSON response: {e}")
         raise
     return prompt_id
-
-
-

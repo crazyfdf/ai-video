@@ -1,0 +1,11 @@
+{
+  "project": [
+    "src/**/*.{js,jsx,ts,tsx}",
+    "!src/**/*.test.{js,jsx,ts,tsx}",
+    "!src/**/*.spec.{js,jsx,ts,tsx}"
+  ],
+  "ignore": [
+    "src/types/index.ts",
+    "src/utils/test-helpers.ts"
+  ]
+}

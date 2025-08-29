@@ -1,0 +1,14 @@
+[tool.autoflake]
+check = false
+in-place = true
+recursive = true
+remove-all-unused-imports = true
+remove-unused-variables = true
+ignore-init-module-imports = true
+
+[tool.vulture]
+min_confidence = 80
+paths = ["backend/"]
+exclude = ["*test*", "*__pycache__*"]
+ignore_names = ["*test*", "*Test*"]
+ignore_decorators = ["@app.route", "@bp.route"]

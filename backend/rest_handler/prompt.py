@@ -1,15 +1,24 @@
-import json
-from flask import Flask, request, jsonify
-import os
-import shutil
-import re
 import concurrent.futures
+import json
 import logging
+import os
+import re
+import shutil
+
+from flask import jsonify, request
+
 from backend.llm.llm import llm_translate, query_llm
-from backend.util.constant import character_dir, novel_fragments_dir, prompts_dir, prompts_en_dir, prompt_path
-from backend.util.file import read_lines_from_directory, save_list_to_files, read_file
+from backend.util.constant import (
+    character_dir,
+    novel_fragments_dir,
+    prompt_path,
+    prompts_dir,
+    prompts_en_dir,
+)
+from backend.util.file import read_file, read_lines_from_directory, save_list_to_files
 
 fragmentsLen = 30
+
 
 # Function to generate input prompts
 def generate_input_prompts(lines, step):
@@ -21,6 +30,7 @@ def generate_input_prompts(lines, step):
         prompts.append(prompt)
     return prompts
 
+
 # Function to translate prompts
 def translate_prompts(lines):
     def translate_line(line):
@@ -30,6 +40,7 @@ def translate_prompts(lines):
     with concurrent.futures.ThreadPoolExecutor() as executor:
         translated_lines = list(executor.map(translate_line, lines))
     return translated_lines
+
 
 def extract_scene_from_texts():
     try:
@@ -53,8 +64,8 @@ def extract_scene_from_texts():
         res = query_llm(p, sys, "x", 1, 8192)
         logging.info(res)
         lines = res.split("\n")
-        re_pattern = re.compile(r'^\d+\.\s*')
-        t2i_prompts = [re_pattern.sub('', line) for line in lines if line.strip()]
+        re_pattern = re.compile(r"^\d+\.\s*")
+        t2i_prompts = [re_pattern.sub("", line) for line in lines if line.strip()]
         offset += len(t2i_prompts)
         try:
             logging.info(f"len is {len(t2i_prompts)}")
@@ -62,15 +73,13 @@ def extract_scene_from_texts():
         except Exception as e:
             return jsonify({"error": "save list to file failed"}), 500
 
-    
     lines, err = read_lines_from_directory(prompts_dir)
     if err:
         return jsonify({"error": "Failed to read fragments"}), 500
-    
-       
 
     logging.info("extract prompts from novel fragments finished")
     return jsonify(lines), 200
+
 
 def get_prompts_en():
     try:
@@ -80,17 +89,16 @@ def get_prompts_en():
     except Exception as e:
         return jsonify({"error": "Failed to manage directory"}), 500
 
-    
     lines, err = read_lines_from_directory(prompts_dir)
     if err:
         return jsonify({"error": "Failed to read fragments"}), 500
 
     try:
         character_map = {}
-        p = os.path.join(character_dir, 'characters.txt')
+        p = os.path.join(character_dir, "characters.txt")
         if os.path.exists(p):
-            with open(p, 'r', encoding='utf8') as file:
-                    character_map = json.load(file)
+            with open(p, "r", encoding="utf8") as file:
+                character_map = json.load(file)
 
         for i, line in enumerate(lines):
             for key, value in character_map.items():
@@ -114,31 +122,33 @@ def get_prompts_en():
     logging.info("translate prompts to English finished")
     return jsonify(lines), 200
 
+
 def save_prompt_en():
     req = request.get_json()
-    if not req or 'index' not in req or 'content' not in req:
+    if not req or "index" not in req or "content" not in req:
         return jsonify({"error": "parse request body failed"}), 400
 
     file_path = os.path.join(prompts_en_dir, f"{req['index']}.txt")
     try:
         os.makedirs(prompts_en_dir, exist_ok=True)
-        with open(file_path, 'w', encoding='utf-8') as file:
-            file.write(req['content'])
+        with open(file_path, "w", encoding="utf-8") as file:
+            file.write(req["content"])
     except Exception as e:
         return jsonify({"error": "Failed to write file"}), 500
 
     return jsonify({"message": "Attachment saved successfully"}), 200
 
+
 def save_prompt_zh():
     req = request.get_json()
-    if not req or 'index' not in req or 'content' not in req:
+    if not req or "index" not in req or "content" not in req:
         return jsonify({"error": "parse request body failed"}), 400
 
     file_path = os.path.join(prompts_dir, f"{req['index']}.txt")
     try:
         os.makedirs(prompts_dir, exist_ok=True)
-        with open(file_path, 'w', encoding='utf-8') as file:
-            file.write(req['content'])
+        with open(file_path, "w", encoding="utf-8") as file:
+            file.write(req["content"])
     except Exception as e:
         return jsonify({"error": "Failed to write file"}), 500
 

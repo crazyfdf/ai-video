@@ -1,4 +1,4 @@
-import { safeImageUrl, validateImageUrl } from './helpers';
+import { safeImageUrl, createPlaceholderSVG } from './helpers';
 
 // 测试URL修复功能
 export const testUrlFixes = () => {
@@ -8,7 +8,7 @@ export const testUrlFixes = () => {
   const testCases = [
     {
       input: '',
-      expected: 'http://localhost:1198/images/placeholder.png',
+      expected: createPlaceholderSVG(),
       description: '空字符串'
     },
     {

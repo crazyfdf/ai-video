@@ -1,0 +1,17 @@
+{
+  "ignores": [
+    "@types/*",
+    "typescript",
+    "eslint*",
+    "postcss",
+    "tailwindcss"
+  ],
+  "skip-missing": false,
+  "ignore-patterns": [
+    "dist",
+    "build",
+    "node_modules",
+    "*.test.*",
+    "*.spec.*"
+  ]
+}

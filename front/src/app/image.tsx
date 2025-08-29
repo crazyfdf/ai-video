@@ -9,10 +9,34 @@ import { SubjectCreationModal } from '../components/SubjectCreationModal';
 import { StorySceneManagement } from '../components/StorySceneManagement';
 import { StoryboardCard } from '../components/StoryboardCard';
 import { ReactSelectLoraSelector } from '../components/ReactSelectLoraSelector';
+import { ProjectSettingsModal } from '../components/ProjectSettingsModal';
+import DataSourceModal from '../components/DataSourceModal';
 import { APIService } from '../services/api';
-import { safeImageUrl } from '../utils/helpers';
+import { safeImageUrl, createPlaceholderSVG } from '../utils/helpers';
 import { showToast } from './toast';
+import { getDefaultImageConfig, getImageGenerationConfig, ASPECT_RATIOS, QUALITY_OPTIONS } from '../utils/imageConfig';
+import { MultiImagePreview } from '../components/MultiImagePreview';
+import ImageDimensionSelector from '../components/ImageDimensionSelector';
+import SubjectManager from '../components/SubjectManager';
+
 import '../styles/components.css';
+
+// 导入 imageHandlers 模块并定义别名以区分函数名
+import {
+  mapElementsToRegionParams as mapElementsToRegionParamsHandler,
+  generateImageWithRegionControl as generateImageWithRegionControlHandler,
+  generateImageWithLora as generateImageWithLoraHandler,
+  generateAllImages as generateAllImagesHandler,
+  generateArtStyleGuide as generateArtStyleGuideHandler,
+  generateSceneAudioDesign as generateSceneAudioHandler,
+  generateSceneDialogue as generateSceneDialogueHandler,
+  generateSoundEffect as generateSoundEffectHandler,
+  generateCharacterVoiceDesign as generateCharacterVoiceDesignHandler
+} from './imageHandlers';
+import { MultiImageSelector } from '@/components/MultiImageSelector';
+
+// 尺寸配置常量
+
 
 // 项目管理相关类型
 interface Project {
@@ -35,6 +59,19 @@ interface ProjectFile {
 }
 
 export default function AIImageGenerator() {
+  // 项目管理状态 - 需要在useStoryboard之前定义
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [currentProject, setCurrentProject] = useState<Project | null>(null);
+  const [projectFiles, setProjectFiles] = useState<ProjectFile[]>([]);
+  const [showProjectModal, setShowProjectModal] = useState(false);
+  const [newProjectName, setNewProjectName] = useState('');
+  const [newProjectDescription, setNewProjectDescription] = useState('');
+  const [showProjectSettingsModal, setShowProjectSettingsModal] = useState(false);
+
+
+  
+
+
   // 使用自定义 hooks
   const {
     fragments,
@@ -43,42 +80,44 @@ export default function AIImageGenerator() {
     images,
     characters,
     characterImages,
-    storySummary,
+
     storyboardRequiredElements,
     isLoading,
     loaded,
     sceneImages,
     videoPrompts,
     videos,
+    characterDialogues,
+    soundEffects,
     setStoryboards,
     setSceneDescriptions,
-    setStorySummary,
+
     setVideoPrompts,
-    setVideos,
     setImages,
     setCharacters,
     setCharacterImages,
+    setSoundEffects,
     initialize,
     generateStoryAndCharacters: originalGenerateStoryAndCharacters,
     generateSceneStoryboards,
-  } = useStoryboard();
+  } = useStoryboard(currentProject);
 
   const {
     characterSubjects,
     sceneSubjects,
-    novelScenes,
     isCreatingSubject,
     subjectCreationMode,
     setIsCreatingSubject,
+    setSubjectCreationMode,
+    setCharacterSubjects,
+    setSceneSubjects,
     createCharacterSubject,
     createSceneSubject,
     createNewSceneSubject,
-    createNewCharacterSubject,
     uploadSubjectImage,
-    updateNovelScenes,
     updateSceneSubject,
     loadSubjects,
-  } = useSubjects();
+  } = useSubjects(currentProject);
 
   // 预览状态
   const [previewImage, setPreviewImage] = useState<string | null>(null);
@@ -89,8 +128,42 @@ export default function AIImageGenerator() {
   // 视频相关状态
   const [isGeneratingVideo, setIsGeneratingVideo] = useState<boolean>(false);
   
+  // 音效生成状态
+  const [isGeneratingSoundEffect, setIsGeneratingSoundEffect] = useState<boolean>(false);
+  
   // 额外角色图片状态
   const [additionalCharacterImages, setAdditionalCharacterImages] = useState<{[key: number]: string[]}>({});
+  
+  // 额外场景图片状态
+  const [additionalSceneImages, setAdditionalSceneImages] = useState<{[key: number]: string[]}>({});
+  
+  // 场景图片生成状态
+  const [isGeneratingSceneImage, setIsGeneratingSceneImage] = useState<{[key: number]: boolean}>({});
+  
+
+  
+  // 多图片预览状态
+  const [multiImagePreview, setMultiImagePreview] = useState<{
+    isOpen: boolean;
+    images: string[];
+    title: string;
+    onSelect?: (imageUrl: string) => void;
+    onMultiSelect?: (imageUrls: string[]) => void;
+    selectedIndex: number;
+    multiSelect: boolean;
+    currentCharacterIndex?: number; // 当前操作的角色索引
+    showAddButtons?: boolean; // 是否显示添加按钮
+  }>({
+    isOpen: false,
+    images: [],
+    title: '',
+    onSelect: () => {},
+    onMultiSelect: () => {},
+    selectedIndex: -1,
+    multiSelect: false,
+    currentCharacterIndex: undefined,
+    showAddButtons: false
+  });
   
   // 折叠状态管理
   const [characterPanelCollapsed, setCharacterPanelCollapsed] = useState<boolean>(false);
@@ -104,29 +177,103 @@ export default function AIImageGenerator() {
   const [sceneLoraSelections, setSceneLoraSelections] = useState<{[key: number]: string}>({});
   const [isSmartGenerating, setIsSmartGenerating] = useState<{[key: number]: boolean}>({});
 
-  // 项目管理状态
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [currentProject, setCurrentProject] = useState<Project | null>(null);
-  const [projectFiles, setProjectFiles] = useState<ProjectFile[]>([]);
-  const [showProjectModal, setShowProjectModal] = useState(false);
-  const [newProjectName, setNewProjectName] = useState('');
-  const [newProjectDescription, setNewProjectDescription] = useState('');
+  // 角色图片生成尺寸状态
+  const [characterImageDimensions, setCharacterImageDimensions] = useState<{[key: number]: {aspectRatio: string, quality: string}}>({});
 
   // 完整故事内容状态
   const [fullStoryContent, setFullStoryContent] = useState('');
 
-  // 增强版的生成故事和角色函数，同时生成场景主体
-  const generateStoryAndCharacters = async () => {
+  // 主体管理库相关状态
+  const [showSubjectManager, setShowSubjectManager] = useState(false);
+  const [selectedCharacterLora, setSelectedCharacterLora] = useState(null);
+  const [selectedSceneLora, setSelectedSceneLora] = useState(null);
+  const [currentCharacterPrompt, setCurrentCharacterPrompt] = useState('');
+  const [currentScenePrompt, setCurrentScenePrompt] = useState('');
+
+  // 数据源选择模态框状态
+  const [showDataSourceModal, setShowDataSourceModal] = useState(false);
+  const [dataSourceModalType, setDataSourceModalType] = useState<'story' | 'storyboard'>('story');
+
+  // 分区控制相关状态
+  // 移除regionControlParams相关状态，直接使用标准接口
+
+  // 从文件加载故事数据
+  const loadStoryDataFromFile = async () => {
     try {
-      // 调用原始函数
-      await originalGenerateStoryAndCharacters();
+      if (!currentProject) {
+        showToast('请先选择或创建项目');
+        return;
+      }
+      
+      showToast('正在从文件加载故事数据...');
+      
+      // 调用useStoryboard hook中的generateStoryAndCharacters函数
+      // 该函数已经包含了优先从文件加载的逻辑
+      await (originalGenerateStoryAndCharacters as unknown as () => Promise<void>)();
+      
+      showToast('故事数据加载完成！');
+    } catch (error) {
+      console.error('Error loading story data from file:', error);
+      showToast(`加载失败: ${(error as Error).message}`);
+    } finally {
+    }
+  };
+
+  // 处理数据源选择
+  const handleDataSourceSelection = async (source: 'file' | 'api') => {
+    try {
+      if (source === 'file') {
+        // 从文件加载数据
+        if (dataSourceModalType === 'story') {
+          await loadStoryDataFromFile();
+        } else {
+          await generateSceneStoryboards(undefined, 'file');
+        }
+      } else {
+        // 调用API生成
+        if (dataSourceModalType === 'story') {
+          await generateStoryAndCharacters();
+        } else {
+          await generateSceneStoryboards(undefined, 'api');
+        }
+      }
+    } catch (error) {
+      console.error('Error handling data source selection:', error);
+      showToast(`操作失败: ${(error as Error).message}`);
+    } finally {
+      setShowDataSourceModal(false);
+    }
+  };
+
+  // 增强版的生成故事和角色函数，同时生成场景主体
+  const generateStoryAndCharacters = async (startChapter?: number, endChapter?: number) => {
+    try {
+      // 确保项目名称已设置
+      if (!currentProject) {
+        showToast('请先选择或创建项目');
+        return;
+      }
+      
+      // 确保全局项目名称已设置
+      (window as any).currentProjectName = currentProject.name;
+      console.log('Current project name set to:', currentProject.name);
+      
+      // 调用原始函数，传递章节范围参数（进行类型断言以兼容可选参数）
+      await (originalGenerateStoryAndCharacters as unknown as (start?: number, end?: number) => Promise<void>)(startChapter, endChapter);
+      
+      // 添加调试信息
+      console.log('After generateStoryAndCharacters, characters:', characters);
       
       // 检查是否有生成的场景数据
       const generatedScenes = (window as any).generatedScenes;
       if (generatedScenes && generatedScenes.length > 0) {
+        console.log('Creating scene subjects for project:', currentProject.name);
+        console.log('Generated scenes:', generatedScenes);
+        
         // 为每个场景创建主体
         for (const scene of generatedScenes) {
           try {
+            console.log(`Creating scene subject: ${scene.name} for project: ${currentProject.name}`);
             await createSceneSubject(scene.name, scene.englishPrompt, []);
             showToast(`场景主体 "${scene.name}" 创建成功`);
           } catch (error) {
@@ -139,47 +286,195 @@ export default function AIImageGenerator() {
         
         showToast(`场景主体创建完成！共创建${generatedScenes.length}个场景主体`);
       }
+      
+      // 生成完成后，自动打开主体管理库进行 LoRA 选择
+      if (characters.length > 0 || generatedScenes?.length > 0) {
+        // 设置当前角色和场景的提示词
+        if (characters.length > 0) {
+          setCurrentCharacterPrompt(characters[0]?.appearance || characters[0]?.name || '');
+        }
+        if (generatedScenes?.length > 0) {
+          setCurrentScenePrompt(generatedScenes[0]?.description || generatedScenes[0]?.name || '');
+        }
+        
+        // 延迟打开主体管理库，确保状态更新完成
+        setTimeout(() => {
+          setShowSubjectManager(true);
+          showToast('请选择适合的 LoRA 模型来优化生成效果');
+        }, 1000);
+      }
     } catch (error) {
       console.error('Error in enhanced generate story and characters:', error);
       showToast(`生成失败: ${(error as Error).message}`);
     }
   };
 
-  useEffect(() => {
-    initialize();
-    loadLoraList();
-    loadSceneLoraSelections();
-    loadProjects();
+  // 处理 LoRA 选择
+  const handleLoraSelected = (characterLora: any, sceneLora: any) => {
+    setSelectedCharacterLora(characterLora);
+    setSelectedSceneLora(sceneLora);
     
-    // 检查是否有当前项目，如果没有则强制显示项目创建模态框
-    const currentProjectId = localStorage.getItem('current_project_id');
-    if (!currentProjectId) {
-      setShowProjectModal(true);
+    if (characterLora) {
+      showToast(`已选择角色 LoRA: ${characterLora.name}`);
+      // 可以在这里保存到 ComfyUI-LoRA-Manager 的 Recipes
+      saveLoraToRecipes('character', characterLora);
     }
-  }, [initialize]);
+    
+    if (sceneLora) {
+      showToast(`已选择场景 LoRA: ${sceneLora.name}`);
+      // 可以在这里保存到 ComfyUI-LoRA-Manager 的 Recipes
+      saveLoraToRecipes('scene', sceneLora);
+    }
+    
+    showToast('LoRA 选择完成，可以开始生成图片了！');
+  };
 
-  // 项目管理功能
+  // 保存 LoRA 到 ComfyUI-LoRA-Manager Recipes
+  const saveLoraToRecipes = async (type: 'character' | 'scene', lora: any) => {
+    try {
+      const response = await fetch('/api/lora/recipes/save', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          type,
+          lora_info: {
+            id: lora.id,
+            name: lora.name,
+            description: lora.description,
+            modelVersion: lora.modelVersions?.[0],
+            trainedWords: lora.modelVersions?.[0]?.trainedWords || [],
+            baseModel: lora.modelVersions?.[0]?.baseModel || '',
+            downloadUrl: lora.modelVersions?.[0]?.downloadUrl || ''
+          },
+          project_id: currentProject?.id || (() => { throw new Error('Project ID is required'); })()
+        })
+      });
+
+      const result = await response.json();
+      
+      if (!result.success) {
+        throw new Error(result.error || '保存失败');
+      }
+      
+      console.log(`${type} LoRA 已保存到 Recipes:`, result.recipe_name);
+      showToast(`${type === 'character' ? '角色' : '场景'} LoRA 已保存到 ComfyUI-LoRA-Manager Recipes`);
+      
+    } catch (error) {
+      console.error(`Error saving ${type} LoRA to recipes:`, error);
+      showToast(`保存 ${type} LoRA 到 Recipes 失败: ${error instanceof Error ? error.message : '未知错误'}`);
+    }
+  };
+
+  useEffect(() => {
+    // 先加载项目，然后再初始化数据
+    const initializeApp = async () => {
+      await loadProjects();
+      // 项目加载完成后再初始化数据
+      await initialize();
+    };
+    
+    initializeApp();
+    loadLoraList();
+    // 移除loadRegionControlParams调用，直接使用标准接口
+
+    // 在页面加载时预取分区控制参数映射，避免首次生成时延迟
+    (async () => {
+      try {
+        await APIService.getRegionControlParamMapping();
+        console.log('[Prefetch] RegionControlParamMapping cached');
+      } catch (e) {
+        console.error('预取分区控制参数映射失败:', e);
+      }
+    })();
+    
+    // 取消旧的定时检测：是否显示创建项目模态框由 loadProjects 的结果决定
+  }, []); // 移除initialize依赖，避免无限循环
+
+  // 项目管理功能 - 从文件系统和当前项目状态加载
   const loadProjects = async () => {
     try {
-      const savedProjects = localStorage.getItem('ai_projects');
-      if (savedProjects) {
-        const projectList = JSON.parse(savedProjects);
-        setProjects(projectList);
+      console.log('🔄 开始加载项目列表...');
+      
+      // 从后端API获取项目列表
+      const response = await fetch('http://localhost:1198/api/projects/list');
+      console.log('📡 项目列表API响应状态:', response.status, response.statusText);
+      
+      if (response.ok) {
+        const projectList = await response.json();
+        console.log('📋 原始项目数据:', projectList);
+        console.log('📋 项目数组长度:', projectList?.length || 0);
         
-        // 如果有当前项目ID，加载该项目
-        const currentProjectId = localStorage.getItem('current_project_id');
-        if (currentProjectId) {
-          const project = projectList.find((p: Project) => p.id === currentProjectId);
-          if (project) {
-            setCurrentProject(project);
-            loadProjectFiles(project.id);
-            // 设置全局项目名称，供后端使用
-            (window as any).currentProjectName = project.name;
+        setProjects(projectList);
+        console.log('✅ setProjects调用完成，设置项目数组:', projectList);
+        
+        // 获取当前项目状态
+        const currentResponse = await fetch('http://localhost:1198/api/projects/current');
+        console.log('📡 当前项目API响应状态:', currentResponse.status, currentResponse.statusText);
+        
+        let selectedProject = null;
+        
+        if (currentResponse.ok) {
+          const currentData = await currentResponse.json();
+          console.log('🎯 当前项目数据:', currentData);
+          
+          if (currentData.currentProject) {
+            // 在项目列表中查找当前项目
+            selectedProject = projectList.find(p => p.id === currentData.currentProject.id);
+            console.log('🔍 查找匹配项目结果:', selectedProject);
           }
         }
+        
+        // 如果没有找到当前项目或当前项目不存在，选择第一个项目
+        if (!selectedProject && projectList.length > 0) {
+          selectedProject = projectList[0];
+          console.log('📁 选择第一个项目:', selectedProject);
+        }
+        
+        if (selectedProject) {
+          console.log('🎯 设置当前项目:', selectedProject);
+          setCurrentProject(selectedProject);
+          // 设置全局项目名称，供后端使用
+          (window as any).currentProjectName = selectedProject.name;
+          // 更新当前项目状态到后端
+          await updateCurrentProjectState(selectedProject);
+          // 立刻加载与项目相关的文件与主体数据
+          loadProjectFiles(selectedProject.id);
+          try { await loadSubjects(selectedProject.name); } catch (e) { console.warn('加载主体数据失败（忽略）', e); }
+          // 加载场景LoRA选择
+          try { await loadSceneLoraSelections(); } catch (e) { console.warn('加载场景LoRA选择失败（忽略）', e); }
+          console.log('🚪 关闭项目选择模态框');
+          setShowProjectModal(false);
+        } else {
+          console.log('🚪 没有可选项目，显示项目选择模态框');
+          console.log('📋 当前项目列表长度:', projectList.length);
+          setShowProjectModal(true);
+        }
+      } else {
+        console.log('❌ 项目列表API请求失败:', response.status, response.statusText);
+        setShowProjectModal(true);
       }
     } catch (error) {
-      console.error('Error loading projects:', error);
+      console.error('❌ 加载项目时出错:', error);
+      // 如果后端不可用，显示项目创建模态框
+      console.log('🚪 后端不可用，显示项目创建模态框');
+      setProjects([]);
+      setCurrentProject(null);
+      setShowProjectModal(true);
+    }
+  };
+
+  // 更新当前项目状态到后端
+  const updateCurrentProjectState = async (project: Project) => {
+    try {
+      await fetch('http://localhost:1198/api/projects/current', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project })
+      });
+    } catch (error) {
+      console.error('Error updating current project state:', error);
     }
   };
 
@@ -197,12 +492,26 @@ export default function AIImageGenerator() {
       updatedAt: new Date().toISOString()
     };
 
-    const updatedProjects = [...projects, newProject];
-    setProjects(updatedProjects);
-    localStorage.setItem('ai_projects', JSON.stringify(updatedProjects));
+    try {
+      // 通过后端API创建项目
+      const response = await fetch('http://localhost:1198/api/projects/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newProject)
+      });
+      
+      if (response.ok) {
+        const updatedProjects = [...projects, newProject];
+        setProjects(updatedProjects);
+      }
+    } catch (error) {
+      console.error('Error creating project via API:', error);
+      // 如果后端不可用，仅在前端状态中创建
+      const updatedProjects = [...projects, newProject];
+      setProjects(updatedProjects);
+    }
     
     setCurrentProject(newProject);
-    localStorage.setItem('current_project_id', newProject.id);
     // 设置全局项目名称，供后端使用
     (window as any).currentProjectName = newProject.name;
     
@@ -215,20 +524,79 @@ export default function AIImageGenerator() {
 
   const switchProject = async (project: Project) => {
     setCurrentProject(project);
-    localStorage.setItem('current_project_id', project.id);
     await loadProjectFiles(project.id);
     // 设置全局项目名称，供后端使用
     (window as any).currentProjectName = project.name;
+    // 更新当前项目状态到后端
+    await updateCurrentProjectState(project);
+    // 重新加载主体数据
+    try { await loadSubjects(project.name); } catch (e) { console.warn('加载主体数据失败（忽略）', e); }
     showToast(`已切换到项目 "${project.name}"`);
+  };
+
+  const updateProjectSettings = async (updates: any) => {
+    if (!currentProject) {
+      console.log('No current project, settings will be saved globally');
+      return;
+    }
+
+    const updatedProject = {
+      ...currentProject,
+      ...updates,
+      updatedAt: new Date().toISOString()
+    };
+
+    setCurrentProject(updatedProject);
+
+    // 更新项目列表
+    const updatedProjects = projects.map(p => 
+      p.id === updatedProject.id ? updatedProject : p
+    );
+    setProjects(updatedProjects);
+    
+    try {
+      // 通过后端API更新项目设置
+      await fetch('http://localhost:1198/api/projects/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedProject)
+      });
+    } catch (error) {
+      console.error('Error updating project via API:', error);
+      // 如果后端不可用，仅在前端状态中更新
+    }
+
+    showToast(`项目设置已保存`);
   };
 
   const loadProjectFiles = async (projectId: string) => {
     try {
-      const savedFiles = localStorage.getItem(`project_files_${projectId}`);
-      if (savedFiles) {
-        setProjectFiles(JSON.parse(savedFiles));
+      // 从后端API获取项目文件列表
+      const response = await fetch(`http://localhost:1198/api/projects/${projectId}/files`);
+      if (response.ok) {
+        const files = await response.json();
+        setProjectFiles(files);
       } else {
         setProjectFiles([]);
+      }
+      
+      // 加载分镜元素数据
+      try {
+        const projectName = projects.find(p => p.id === projectId)?.name || currentProject?.name;
+        if (projectName) {
+          const storyboardElements = await APIService.loadStoryboardElements(projectName);
+          console.log('Loaded storyboard elements:', storyboardElements);
+          
+          // 更新角色和场景主体数据
+          if (storyboardElements.characters && storyboardElements.characters.length > 0) {
+            setCharacterSubjects(storyboardElements.characters);
+          }
+          if (storyboardElements.scenes && storyboardElements.scenes.length > 0) {
+            setSceneSubjects(storyboardElements.scenes);
+          }
+        }
+      } catch (error) {
+        console.warn('Failed to load storyboard elements:', error);
       }
     } catch (error) {
       console.error('Error loading project files:', error);
@@ -253,9 +621,24 @@ export default function AIImageGenerator() {
       createdAt: new Date().toISOString()
     };
 
-    const updatedFiles = [...projectFiles, newFile];
-    setProjectFiles(updatedFiles);
-    localStorage.setItem(`project_files_${currentProject.id}`, JSON.stringify(updatedFiles));
+    try {
+      // 通过后端API保存项目文件
+      const response = await fetch('http://localhost:1198/api/projects/files/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newFile)
+      });
+      
+      if (response.ok) {
+        const updatedFiles = [...projectFiles, newFile];
+        setProjectFiles(updatedFiles);
+      }
+    } catch (error) {
+      console.error('Error saving project file via API:', error);
+      // 如果后端不可用，仅在前端状态中保存
+      const updatedFiles = [...projectFiles, newFile];
+      setProjectFiles(updatedFiles);
+    }
     
     showToast(`${name} 已保存到项目 "${currentProject.name}"`);
   };
@@ -347,6 +730,10 @@ export default function AIImageGenerator() {
     }
   };
 
+  // 移除loadRegionControlParams函数，直接使用标准接口
+
+  // 使用标准处理器：mapElementsToRegionParamsHandler（已从 ./imageHandlers 导入）
+
   // 处理分镜LoRA选择变化
   const handleSceneLoraChange = async (sceneIndex: number, lora: string) => {
     const newSelections = {
@@ -406,13 +793,41 @@ export default function AIImageGenerator() {
   };
 
   // 处理场景主体变化
-  const handleSceneSubjectChange = async (index: number, field: string, value: string) => {
-    try {
-      await updateSceneSubject(index, field, value);
-    } catch (error) {
+  const handleSceneSubjectChange = (index: number, field: string, value: string) => {
+    updateSceneSubject(index, field, value).catch((error) => {
       console.error('Error updating scene subject:', error);
       showToast('场景主体更新失败');
-    }
+    });
+  };
+
+  // 处理分镜卡片中的场景主体变化（四参，忽略场景序号）
+  const handleSceneSubjectChangeFromCard = (
+    sceneIndex: number,
+    subjectIndex: number,
+    field: string,
+    value: string
+  ) => {
+    updateSceneSubject(subjectIndex, field, value).catch((error) => {
+      console.error('Error updating scene subject from card:', error);
+      showToast('场景主体更新失败');
+    });
+  };
+
+  // 预填充数据状态
+  const [prefilledSubjectData, setPrefilledSubjectData] = useState<{
+    name?: string;
+    description?: string;
+  } | null>(null);
+
+  // 处理从StoryboardCard创建场景主体
+  const handleCreateSceneSubjectFromCard = async (sceneIndex: number, subjectName: string, scenePrompt?: string) => {
+    // 设置预填充数据并打开模态框
+    setPrefilledSubjectData({
+      name: subjectName,
+      description: scenePrompt || ''
+    });
+    setSubjectCreationMode('scene');
+    setIsCreatingSubject(true);
   };
 
   // 合并片段
@@ -422,7 +837,7 @@ export default function AIImageGenerator() {
   };
 
   // 生成图片
-  const handleGenerateImage = async (index: number) => {
+  const handleGenerateImage = async (index: number, width?: number, height?: number) => {
     try {
       showToast(`开始生成第${index + 1}个画面...`);
       
@@ -469,8 +884,12 @@ export default function AIImageGenerator() {
       // 获取选择的LoRA
       const selectedLora = sceneLoraSelections[index];
 
-      // 生成图片（支持LoRA），生成单张图片
-      const result = await APIService.generateImageWithLora(finalPrompt, API_KEY, selectedLora, 1);
+      // 获取尺寸配置（使用传入参数或默认配置）
+      const defaultConfig = getDefaultImageConfig(currentProject);
+      const finalWidth = width || defaultConfig.width;
+      const finalHeight = height || defaultConfig.height;
+      // 生成图片（支持LoRA），生成单张图片，分镜画面使用"分区控制"模型
+      const result = await APIService.generateImageWithLora(finalPrompt, API_KEY, selectedLora, 1, finalWidth, finalHeight, "分区控制");
       
       if (result.data && result.data.length > 0) {
         const imageUrl = result.data[0].url;
@@ -501,7 +920,7 @@ export default function AIImageGenerator() {
   };
 
   // 智能生成图片（根据分镜元素应用LoRA）
-  const handleGenerateImageWithElements = async (index: number) => {
+  const handleGenerateImageWithElements = async (index: number, width?: number, height?: number) => {
     try {
       // 设置生成状态
       setIsSmartGenerating(prev => ({ ...prev, [index]: true }));
@@ -512,114 +931,181 @@ export default function AIImageGenerator() {
         showToast('请先分析分镜所需元素');
         return;
       }
-      
-      // 获取EasyAI API Key
-      const config = await APIService.getModelConfig();
-      const API_KEY = config.easyaiApiKey;
-      
-      if (!API_KEY) {
-        throw new Error('EasyAI API Key未配置，请在初始化页面配置');
-      }
 
       const requiredElements = storyboardRequiredElements[index];
-      let finalPrompt = sceneDescriptions[index] || '';
-      const lorasToUse: string[] = [];
-      
-      // 收集角色主体的LoRA
-      if (requiredElements.character_subjects) {
-        requiredElements.character_subjects.forEach((charSubject: string) => {
-          const charName = charSubject.replace('@', '');
-          const charSubjectData = characterSubjects.find(cs => cs.name === charName);
-          if (charSubjectData?.selectedLora) {
-            lorasToUse.push(charSubjectData.selectedLora);
-            // 添加角色标签到提示词
-            if (charSubjectData.tag) {
-              finalPrompt += `, ${charSubjectData.tag}`;
-            }
-          }
-        });
-      }
-      
-      // 收集场景主体的LoRA
-      if (requiredElements.scene_subjects) {
-        requiredElements.scene_subjects.forEach((sceneSubject: string) => {
-          const sceneName = sceneSubject.replace('@', '');
-          const sceneSubjectData = sceneSubjects.find(ss => ss.name === sceneName);
-          if (sceneSubjectData?.selectedLora) {
-            lorasToUse.push(sceneSubjectData.selectedLora);
-            // 添加场景标签到提示词
-            if (sceneSubjectData.tag) {
-              finalPrompt += `, ${sceneSubjectData.tag}`;
-            }
-          }
-        });
-      }
-      
-      // 添加场景环境提示词
-      if (requiredElements.scene_prompt) {
-        finalPrompt += `, ${requiredElements.scene_prompt}`;
-      }
-      
-      // 如果最终提示词为空，使用默认提示词
-      if (!finalPrompt.trim()) {
-        finalPrompt = "masterpiece, best quality, ultra detailed, 8k, photorealistic, cinematic lighting";
-      }
 
-      console.log(`Smart generation for scene ${index + 1}:`);
-      console.log('Final prompt:', finalPrompt);
-      console.log('LoRAs to use:', lorasToUse);
+      // 从分镜文本中提取 @主体 标记，作为兜底来源，并与requiredElements合并
+      const sceneText = sceneDescriptions[index] || '';
+      const matches = sceneText.match(/@([^\s,，。！？]+)/g) || [];
+      const normalizeName = (s: string) => String(s || '').replace(/^@/, '').replace(/[\s()（）:：,，、\-]/g, '');
 
-      // LoRA合并策略：优先使用角色LoRA，如果没有则使用场景LoRA
-      let primaryLora: string | undefined = undefined;
-      let loraStrategy = '';
-      
-      // 首先查找角色LoRA
-      if (requiredElements.character_subjects) {
-        for (const charSubject of requiredElements.character_subjects) {
-          const charName = charSubject.replace('@', '');
-          const charSubjectData = characterSubjects.find(cs => cs.name === charName);
-          if (charSubjectData?.selectedLora) {
-            primaryLora = charSubjectData.selectedLora;
-            loraStrategy = `角色LoRA(${charName})`;
-            break;
+      const existingCharNorms = new Set(
+        (Array.isArray(requiredElements.character_subjects) ? requiredElements.character_subjects : [])
+          .map((t: string) => normalizeName(t))
+      );
+      const existingSceneNorms = new Set(
+        (Array.isArray(requiredElements.scene_subjects) ? requiredElements.scene_subjects : [])
+          .map((t: string) => normalizeName(t))
+      );
+
+      const tokenChars: string[] = [];
+      const tokenScenes: string[] = [];
+      for (const m of matches) {
+        const raw = m;
+        const name = raw.replace(/^@/, '');
+        const n = normalizeName(name);
+        const charHit = (characterSubjects || []).find((s: any) => {
+          const sn = normalizeName(s.name);
+          const sd = normalizeName(s.description || '');
+          return sn === n || n.includes(sn) || sn.includes(n) || sd.includes(n);
+        });
+        if (charHit) {
+          if (!existingCharNorms.has(n)) {
+            tokenChars.push(`@${name}`);
+            existingCharNorms.add(n);
           }
+          continue;
+        }
+        const sceneHit = (sceneSubjects || []).find((s: any) => {
+          const sn = normalizeName(s.name);
+          const sd = normalizeName(s.description || '');
+          return sn === n || n.includes(sn) || sn.includes(n) || sd.includes(n);
+        });
+        if (sceneHit && !existingSceneNorms.has(n)) {
+          tokenScenes.push(`@${name}`);
+          existingSceneNorms.add(n);
         }
       }
+
+      // 合并标签，确保关键主体优先
+      const sceneTags: string[] = [
+        ...tokenScenes,
+        ...((Array.isArray(requiredElements.scene_subjects) ? requiredElements.scene_subjects : [])
+          .filter((t: string) => !tokenScenes.find(ts => normalizeName(ts) === normalizeName(t))))
+      ];
+      const charTags: string[] = [
+        ...tokenChars,
+        ...((Array.isArray(requiredElements.character_subjects) ? requiredElements.character_subjects : [])
+          .filter((t: string) => !tokenChars.find(tc => normalizeName(tc) === normalizeName(t))))
+      ];
       
-      // 如果没有角色LoRA，使用场景LoRA
-      if (!primaryLora && requiredElements.scene_subjects) {
-        for (const sceneSubject of requiredElements.scene_subjects) {
-          const sceneName = sceneSubject.replace('@', '');
-          const sceneSubjectData = sceneSubjects.find(ss => ss.name === sceneName);
-          if (sceneSubjectData?.selectedLora) {
-            primaryLora = sceneSubjectData.selectedLora;
-            loraStrategy = `场景LoRA(${sceneName})`;
-            break;
+      // 检查是否有元素位置布局数据
+      if (requiredElements.elements_layout && requiredElements.elements_layout.length > 0) {
+        // 当 elements_layout 存在但可能缺少主体名称或类型时，用合并后的 tags 进行补全
+
+        let sceneAssignIdx = 0;
+        let charAssignIdx = 0;
+
+        const enrichedElements = (requiredElements.elements_layout as any[]).map((el: any) => {
+          const e: any = { ...el };
+          // 兼容可能使用了 `type` 字段的情况
+          if (!e.element_type && e.type) e.element_type = e.type;
+
+          if (e.element_type === 'scene') {
+            if (!e.name && sceneTags[sceneAssignIdx]) {
+              e.name = String(sceneTags[sceneAssignIdx]).replace(/^@/, '');
+              sceneAssignIdx = Math.min(sceneAssignIdx + 1, sceneTags.length);
+            }
+          } else if (e.element_type === 'character') {
+            if (!e.name && charTags[charAssignIdx]) {
+              e.name = String(charTags[charAssignIdx]).replace(/^@/, '');
+              charAssignIdx = Math.min(charAssignIdx + 1, charTags.length);
+            }
+          } else {
+            // 若未标注类型，则根据剩余待分配的主体优先匹配场景，否则角色
+            if (!e.element_type) {
+              if (sceneAssignIdx < sceneTags.length) {
+                e.element_type = 'scene';
+                e.name = String(sceneTags[sceneAssignIdx]).replace(/^@/, '');
+                sceneAssignIdx = Math.min(sceneAssignIdx + 1, sceneTags.length);
+              } else if (charAssignIdx < charTags.length) {
+                e.element_type = 'character';
+                e.name = String(charTags[charAssignIdx]).replace(/^@/, '');
+                charAssignIdx = Math.min(charAssignIdx + 1, charTags.length);
+              }
+            }
           }
+
+          // 注入主体的 lora / photo / prompt
+          const subject = e.element_type === 'character'
+            ? (characterSubjects || []).find((s: any) => s.name === e.name)
+            : e.element_type === 'scene'
+              ? (sceneSubjects || []).find((s: any) => s.name === e.name)
+              : null;
+          if (subject) {
+            if (e.lora == null && subject.selectedLora) e.lora = subject.selectedLora;
+            if (e.photo == null) e.photo = subject.subjectImages?.[0] || subject.images?.[0] || '';
+            if (e.prompt == null) e.prompt = subject.tag || subject.description || '';
+          }
+
+          return e;
+        });
+
+        // 若没有任何场景元素但存在场景主体，则追加一个铺满画布的场景元素
+        if (!enrichedElements.some((e: any) => e.element_type === 'scene') && sceneTags.length > 0) {
+          const firstSceneName = String(sceneTags[0]).replace(/^@/, '');
+          const sceneSubject = (sceneSubjects || []).find((s: any) => s.name === firstSceneName);
+          enrichedElements.unshift({
+            element_type: 'scene',
+            name: firstSceneName,
+            // 坐标留空，map函数内默认铺满画布
+            lora: sceneSubject?.selectedLora,
+            photo: sceneSubject?.subjectImages?.[0] || sceneSubject?.images?.[0] || '',
+            prompt: sceneSubject?.tag || sceneSubject?.description || ''
+          });
         }
-      }
-      
-      // 生成图片
-      const result = await APIService.generateImageWithLora(finalPrompt, API_KEY, primaryLora);
-      
-      if (result.data && result.data.length > 0) {
-        const imageUrl = result.data[0].url;
-        
-        // 保存图片
-        await APIService.saveImage(index, imageUrl, finalPrompt);
-        
-        // 更新图片显示
-        const updatedImages = [...images];
-        updatedImages[index] = safeImageUrl(`${imageUrl}?v=${Date.now()}`);
-        setImages(updatedImages);
-        
-        // 显示成功信息
-        const loraInfo = primaryLora 
-          ? ` (${loraStrategy}: ${primaryLora.split('\\').pop()?.replace('.safetensors', '')})`
-          : ' (未使用LoRA)';
-        showToast(`第${index + 1}个分镜智能生成成功${loraInfo}`);
+
+        await generateImageWithRegionControlHandler(index, enrichedElements, width, height, {
+          currentProject,
+          characterSubjects,
+          sceneSubjects,
+          characters,
+          images,
+          setImages,
+        });
       } else {
-        throw new Error('未收到有效的图片数据');
+        // 当缺少elements_layout时：基于合并后的主体标签自动构建分区元素布局，确保@标签主体也被纳入
+        const builtElements: any[] = [];
+
+        // 优先放置场景主体（若提供）
+        if (sceneTags.length > 0) {
+          const firstSceneName = String(sceneTags[0]).replace(/^@/, '');
+          const sceneSubject = (sceneSubjects || []).find((s: any) => s.name === firstSceneName);
+          builtElements.push({
+            element_type: 'scene',
+            name: firstSceneName,
+            // 位置与尺寸留空，map函数内会让scene默认铺满画布
+            lora: sceneSubject?.selectedLora,
+            photo: sceneSubject?.subjectImages?.[0] || sceneSubject?.images?.[0] || '',
+            prompt: sceneSubject?.tag || sceneSubject?.description || ''
+          });
+        }
+
+        // 追加角色主体（基于主体管理坐标，如无则在map中使用兜底）
+        charTags.forEach((tag: string) => {
+          const name = String(tag).replace(/^@/, '');
+          const subject = characterSubjects.find((s: any) => s.name === name);
+          builtElements.push({
+            element_type: 'character',
+            name,
+            x: subject?.x,
+            y: subject?.y,
+            width: subject?.width,
+            height: subject?.height,
+            lora: subject?.selectedLora,
+            photo: subject?.subjectImages?.[0] || subject?.images?.[0] || '',
+            prompt: subject?.tag || subject?.description || ''
+          });
+        });
+
+        await generateImageWithRegionControlHandler(index, builtElements, width, height, {
+          currentProject,
+          characterSubjects,
+          sceneSubjects,
+          characters,
+          images,
+          setImages,
+        });
       }
       
     } catch (error) {
@@ -631,9 +1117,10 @@ export default function AIImageGenerator() {
     }
   };
 
+
   // 生成视频
-  const handleGenerateVideo = (index: number) => {
-    console.log('Generate video:', index);
+  const handleGenerateVideo = (index: number, width?: number, height?: number) => {
+    console.log('Generate video:', index, 'dimensions:', width, height);
     setIsGeneratingVideo(true);
     showToast('生成视频功能待实现');
     setTimeout(() => setIsGeneratingVideo(false), 1000);
@@ -674,48 +1161,6 @@ export default function AIImageGenerator() {
     setIsVideoPreviewOpen(true);
   };
 
-  // 生成画面描述
-  const handleGenerateDescription = async (index: number) => {
-    try {
-      showToast(`开始生成第${index + 1}个画面描述...`);
-      
-      // 获取分镜内容和角色信息
-      const storyboard = storyboards[index];
-      const fragment = fragments[index];
-      
-      if (!storyboard || !fragment) {
-        showToast('请先填写故事片段和分镜描述');
-        return;
-      }
-
-      // 构建包含角色信息的提示词
-      let characterPrompts = '';
-      if (characters.length > 0) {
-        characterPrompts = characters.map(char => char.englishPrompt).join(', ');
-      }
-
-      // 生成画面描述
-      const basePrompt = 'masterpiece, best quality, ultra detailed, 8k, photorealistic';
-      const scenePrompt = `${basePrompt}, ${characterPrompts}, ${storyboard}`;
-      
-      // 更新画面描述
-      const newDescriptions = [...sceneDescriptions];
-      newDescriptions[index] = scenePrompt;
-      setSceneDescriptions(newDescriptions);
-      
-      showToast(`第${index + 1}个画面描述生成完成`);
-      
-    } catch (error) {
-      console.error('Error generating description:', error);
-      showToast(`画面描述生成失败: ${(error as Error).message}`);
-    }
-  };
-
-  // 处理片段变化
-  const handleFragmentChange = (index: number, value: string) => {
-    // 这个功能通常由useStoryboard hook处理
-    console.log('Fragment change:', index, value);
-  };
 
 
 
@@ -733,7 +1178,7 @@ export default function AIImageGenerator() {
     // 保存角色信息
     try {
       await APIService.saveCharacterInfo({
-        summary: storySummary,
+        summary: '',
         characters: newCharacters
       });
       
@@ -801,7 +1246,7 @@ Please create a detailed English prompt suitable for AI image generation, includ
       
       // 保存角色信息
       await APIService.saveCharacterInfo({
-        summary: storySummary,
+        summary: '',
         characters: newCharacters
       });
       
@@ -833,8 +1278,25 @@ Please create a detailed English prompt suitable for AI image generation, includ
         characterPrompt = `masterpiece, best quality, ultra detailed, 8k, photorealistic, professional portrait, ${character.gender === '女性' ? 'beautiful woman' : 'handsome man'}, ${character.age}, ${character.appearance}, studio lighting, clean background, character reference sheet, front view, detailed face, detailed eyes, detailed hair`;
       }
 
-      // 使用支持LoRA的生成方法，生成4张图片
-      const result = await APIService.generateImageWithLora(characterPrompt, API_KEY, character.selectedLora, 4);
+      // 获取角色特定的尺寸配置，如果没有设置则使用默认配置
+      const characterDimension = characterImageDimensions[characterIndex];
+      let width, height;
+      
+      if (characterDimension) {
+        // 使用角色特定的尺寸配置
+        const { aspectRatio, quality } = characterDimension;
+        const config = getImageGenerationConfig(aspectRatio, quality);
+        width = config.width;
+        height = config.height;
+      } else {
+        // 使用默认尺寸配置
+        const defaultConfig = getDefaultImageConfig(currentProject);
+        width = defaultConfig.width;
+        height = defaultConfig.height;
+      }
+      
+      // 使用支持LoRA的生成方法，生成4张图片，角色图片使用"角色形象制作"模型
+      const result = await APIService.generateImageWithLora(characterPrompt, API_KEY, character.selectedLora, 4, width, height, "角色形象制作");
       
       console.log('Character image generation result:', result);
       
@@ -851,7 +1313,7 @@ Please create a detailed English prompt suitable for AI image generation, includ
             console.warn('Unknown image item structure:', item);
             return null;
           }
-        }).filter(url => url !== null);
+        }).filter((url: string | null): url is string => url !== null);
         
         console.log('Extracted image URLs:', imageUrls);
         
@@ -877,24 +1339,66 @@ Please create a detailed English prompt suitable for AI image generation, includ
           
           showToast(`${character.name}的角色图片生成成功${loraInfo}`);
         } else {
-          // 多张图片时，存储到临时状态让用户选择
-          const tempKey = `character_temp_images_${characterIndex}`;
-          (window as any)[tempKey] = {
+          // 多张图片时，打开预览选择器
+          showToast(`成功生成${imageUrls.length}张${character.name}的图片${loraInfo}！请选择一张`);
+          
+          setMultiImagePreview({
+            isOpen: true,
             images: imageUrls,
-            characterIndex,
-            character,
-            loraInfo
-          };
-          
-          showToast(`成功生成${imageUrls.length}张${character.name}的图片${loraInfo}！请在角色卡片中选择一张`);
-          
-          // 触发界面更新，显示图片选择器
-          const updatedCharacters = [...characters];
-          updatedCharacters[characterIndex] = {
-            ...character,
-            tempImages: imageUrls
-          };
-          setCharacters(updatedCharacters);
+            title: `选择${character.name}的角色图片`,
+            currentCharacterIndex: characterIndex,
+            multiSelect: true, // 启用多选模式
+            showAddButtons: true, // 显示添加按钮
+            onSelect: async (selectedImageUrl: string) => {
+              try {
+                // 保存选中的图片
+                await APIService.saveCharacterImage(characterIndex, selectedImageUrl, character);
+                
+                const updatedCharacterImages = [...characterImages];
+                updatedCharacterImages[characterIndex] = safeImageUrl(selectedImageUrl);
+                setCharacterImages(updatedCharacterImages);
+                
+                // 自动保存到当前项目
+                if (currentProject) {
+                  await saveCharacterToProject(character, selectedImageUrl);
+                }
+                
+                // 关闭预览
+                setMultiImagePreview(prev => ({ ...prev, isOpen: false }));
+                showToast(`已为${character.name}选择角色图片`);
+              } catch (error) {
+                console.error('Error selecting character image:', error);
+                showToast('保存角色图片失败');
+              }
+            },
+            onMultiSelect: async (selectedImageUrls: string[]) => {
+              if (selectedImageUrls.length === 1) {
+                // 如果只选择了一张图片，设置为主要角色图片
+                try {
+                  const selectedImageUrl = selectedImageUrls[0];
+                  await APIService.saveCharacterImage(characterIndex, selectedImageUrl, character);
+                  
+                  const updatedCharacterImages = [...characterImages];
+                  updatedCharacterImages[characterIndex] = safeImageUrl(selectedImageUrl);
+                  setCharacterImages(updatedCharacterImages);
+                  
+                  if (currentProject) {
+                    await saveCharacterToProject(character, selectedImageUrl);
+                  }
+                  
+                  setMultiImagePreview(prev => ({ ...prev, isOpen: false }));
+                  showToast(`已为${character.name}选择角色图片`);
+                } catch (error) {
+                  console.error('Error selecting character image:', error);
+                  showToast('保存角色图片失败');
+                }
+              } else {
+                // 多张图片时，提示用户使用添加到主体图/参考图功能
+                showToast('请使用"添加到主体图"或"添加到参考图"按钮来保存多张图片');
+              }
+            },
+            selectedIndex: -1
+          });
         }
       } else {
         console.error('Invalid API response structure:', result);
@@ -1024,6 +1528,110 @@ Please create a detailed English prompt suitable for AI image generation, includ
     }
   };
 
+  // 添加图片到主体图
+  const handleAddToSubjectImage = async (imageUrls: string[]) => {
+    try {
+      const characterIndex = multiImagePreview.currentCharacterIndex;
+      if (characterIndex === undefined) {
+        showToast('无法确定当前角色，请重新操作');
+        return;
+      }
+
+      const character = characters[characterIndex];
+      if (!character) {
+        showToast('角色信息不存在');
+        return;
+      }
+
+      // 查找对应的角色主体
+      const characterSubject = characterSubjects.find(subject => 
+        subject.name === character.name || subject.description.includes(character.name)
+      );
+
+      if (!characterSubject) {
+        showToast(`未找到角色"${character.name}"对应的主体，请先创建角色主体`);
+        return;
+      }
+
+      // 更新角色主体的主体图片
+      const updatedCharacterSubjects = characterSubjects.map(subject => {
+        if (subject.id === characterSubject.id) {
+          return {
+            ...subject,
+            subjectImages: [...(subject.subjectImages || []), ...imageUrls]
+          };
+        }
+        return subject;
+      });
+
+      setCharacterSubjects(updatedCharacterSubjects);
+      
+      // 保存更新
+      await APIService.saveSubjects({
+        characterSubjects: updatedCharacterSubjects,
+        sceneSubjects,
+        
+      });
+
+      showToast(`成功添加${imageUrls.length}张图片到"${character.name}"的主体图`);
+    } catch (error) {
+      console.error('Error adding images to subject:', error);
+      showToast(`添加到主体图失败: ${(error as Error).message}`);
+    }
+  };
+
+  // 添加图片到参考图
+  const handleAddToReferenceImage = async (imageUrls: string[]) => {
+    try {
+      const characterIndex = multiImagePreview.currentCharacterIndex;
+      if (characterIndex === undefined) {
+        showToast('无法确定当前角色，请重新操作');
+        return;
+      }
+
+      const character = characters[characterIndex];
+      if (!character) {
+        showToast('角色信息不存在');
+        return;
+      }
+
+      // 查找对应的角色主体
+      const characterSubject = characterSubjects.find(subject => 
+        subject.name === character.name || subject.description.includes(character.name)
+      );
+
+      if (!characterSubject) {
+        showToast(`未找到角色"${character.name}"对应的主体，请先创建角色主体`);
+        return;
+      }
+
+      // 更新角色主体的参考图片
+      const updatedCharacterSubjects = characterSubjects.map(subject => {
+        if (subject.id === characterSubject.id) {
+          return {
+            ...subject,
+            referenceImages: [...(subject.referenceImages || []), ...imageUrls]
+          };
+        }
+        return subject;
+      });
+
+      setCharacterSubjects(updatedCharacterSubjects);
+      
+      // 保存更新
+      await APIService.saveSubjects({
+        characterSubjects: updatedCharacterSubjects,
+        sceneSubjects,
+        
+      });
+
+      showToast(`成功添加${imageUrls.length}张图片到"${character.name}"的参考图`);
+    } catch (error) {
+      console.error('Error adding images to reference:', error);
+      showToast(`添加到参考图失败: ${(error as Error).message}`);
+    }
+  };
+
   // 上传额外角色图片
   const handleUploadAdditionalCharacterImage = async (characterIndex: number, slotIndex: number) => {
     try {
@@ -1078,11 +1686,92 @@ Please create a detailed English prompt suitable for AI image generation, includ
     }
   };
 
+  // 上传音色文件
+  const handleUploadVoiceFile = async (characterIndex: number) => {
+    try {
+      const fileInput = document.createElement('input');
+      fileInput.type = 'file';
+      fileInput.accept = 'audio/*,.mp3,.wav,.m4a,.aac';
+      
+      fileInput.onchange = async (event) => {
+        const file = (event.target as HTMLInputElement).files?.[0];
+        if (!file) return;
+        
+        try {
+          showToast(`正在上传${characters[characterIndex].name}的音色文件...`);
+          
+          const formData = new FormData();
+          formData.append('voice', file);
+          formData.append('character_index', characterIndex.toString());
+          formData.append('character_name', characters[characterIndex]?.name || `character_${characterIndex}`);
+          
+          const response = await fetch('http://localhost:1198/api/upload/character/voice', {
+            method: 'POST',
+            body: formData,
+          });
+          
+          if (!response.ok) {
+            throw new Error('Failed to upload voice file');
+          }
+          
+          const result = await response.json();
+          
+          // 更新角色音色信息
+          await handleCharacterChange(characterIndex, 'voiceFile', result.voice_url);
+          await handleCharacterChange(characterIndex, 'voiceFileName', file.name);
+          
+          showToast(`${characters[characterIndex].name}的音色文件上传成功`);
+        } catch (error) {
+          console.error('Error uploading voice file:', error);
+          showToast(`上传失败: ${(error as Error).message}`);
+        }
+      };
+      
+      fileInput.click();
+    } catch (error) {
+      console.error('Error uploading voice file:', error);
+      showToast(`上传失败: ${(error as Error).message}`);
+    }
+  };
+
+  // 播放音色文件
+  const handlePlayVoiceFile = (characterIndex: number) => {
+    const character = characters[characterIndex];
+    if (!character.voiceFile) {
+      showToast('没有音色文件');
+      return;
+    }
+    
+    try {
+      const audio = new Audio(character.voiceFile);
+      audio.play();
+      showToast(`正在播放${character.name}的音色文件`);
+    } catch (error) {
+      console.error('Error playing voice file:', error);
+      showToast('播放失败');
+    }
+  };
+
+  // 删除音色文件
+  const handleRemoveVoiceFile = async (characterIndex: number) => {
+    try {
+      await handleCharacterChange(characterIndex, 'voiceFile', '');
+      await handleCharacterChange(characterIndex, 'voiceFileName', '');
+      showToast(`已删除${characters[characterIndex].name}的音色文件`);
+    } catch (error) {
+      console.error('Error removing voice file:', error);
+      showToast('删除失败');
+    }
+  };
+
 
 
   // 生成场景图片
   const handleGenerateSceneImage = async (sceneIndex: number) => {
     try {
+      // 设置生成状态
+      setIsGeneratingSceneImage(prev => ({ ...prev, [sceneIndex]: true }));
+      
       showToast(`开始生成${sceneSubjects[sceneIndex].name}的场景图片...`);
       
       const config = await APIService.getModelConfig();
@@ -1094,23 +1783,47 @@ Please create a detailed English prompt suitable for AI image generation, includ
 
       const sceneSubject = sceneSubjects[sceneIndex];
       
+      // 调试日志：检查场景主体数据
+      console.log('场景主体数据:', sceneSubject);
+      console.log('选中的LoRA:', sceneSubject.selectedLora);
+      
+      // 获取尺寸配置
+      const aspectRatio = sceneSubject.customAspectRatio || '1:1';
+      const quality = sceneSubject.customQuality || 'fhd';
+      const dimensionConfig = QUALITY_OPTIONS[aspectRatio]?.[quality] || QUALITY_OPTIONS['1:1']['fhd'];
+      const { width, height } = dimensionConfig;
+      
       // 使用场景描述作为提示词
       let scenePrompt = sceneSubject.description;
       if (!scenePrompt || scenePrompt.trim() === '') {
         scenePrompt = `masterpiece, best quality, ultra detailed, 8k, photorealistic, cinematic lighting, ${sceneSubject.name}, detailed background, atmospheric lighting`;
       }
 
-      // 使用支持LoRA的生成方法
-      const result = await APIService.generateImageWithLora(scenePrompt, API_KEY, sceneSubject.selectedLora);
+      console.log('生成参数:', {
+        prompt: scenePrompt,
+        lora: sceneSubject.selectedLora,
+        width,
+        height
+      });
+
+      // 生成4张图片供选择
+      const result = await APIService.generateImageWithLora(scenePrompt, API_KEY, sceneSubject.selectedLora, 4, width, height, "场景制作");
       
       if (result.data && result.data.length > 0) {
-        const imageUrl = result.data[0].url;
+        const imageUrls = result.data.map((item: any) => item.url);
         
-        // 保存场景图片
-        await APIService.saveImage(sceneIndex, imageUrl, scenePrompt);
+        // 保存额外的场景图片到状态中
+        setAdditionalSceneImages(prev => ({
+          ...prev,
+          [sceneIndex]: imageUrls
+        }));
+        
+        // 保存第一张图片作为默认场景图片
+        await APIService.saveImage(sceneIndex, imageUrls[0], scenePrompt);
         
         const loraInfo = sceneSubject.selectedLora ? ` (使用LoRA: ${sceneSubject.selectedLora.split('\\').pop()})` : '';
-        showToast(`${sceneSubject.name}的场景图片生成成功${loraInfo}`);
+        const sizeInfo = ` (${width}x${height})`;
+        showToast(`${sceneSubject.name}的场景图片生成成功，共${imageUrls.length}张${loraInfo}${sizeInfo}`);
       } else {
         throw new Error('未收到有效的图片数据');
       }
@@ -1118,262 +1831,47 @@ Please create a detailed English prompt suitable for AI image generation, includ
     } catch (error) {
       console.error('Error generating scene image:', error);
       showToast(`场景图片生成失败: ${(error as Error).message}`);
+    } finally {
+      // 清除生成状态
+      setIsGeneratingSceneImage(prev => ({ ...prev, [sceneIndex]: false }));
     }
   };
 
-  // 分析分镜元素
-  const handleAnalyzeStoryboardElements = async () => {
+  // 处理场景图片选择
+  const handleSceneImageSelect = async (sceneIndex: number, selectedImageUrl: string) => {
     try {
-      showToast('开始分析分镜所需元素...');
+      showToast(`正在保存选中的场景图片到${sceneSubjects[sceneIndex].name}...`);
       
-      if (fragments.length === 0 || storyboards.length === 0) {
-        showToast('请先生成分镜脚本');
-        return;
-      }
+      // 保存选中的图片到场景主体
+      const sceneSubject = sceneSubjects[sceneIndex];
+      const updatedSceneSubject = {
+        ...sceneSubject,
+        images: [...(sceneSubject.images || []), selectedImageUrl]
+      };
       
-      if (characterSubjects.length === 0 && characters.length === 0) {
-        showToast('请先创建角色主体或生成角色信息');
-        return;
-      }
+      // 更新场景主体列表
+      const updatedSceneSubjects = [...sceneSubjects];
+      updatedSceneSubjects[sceneIndex] = updatedSceneSubject;
+      setSceneSubjects(updatedSceneSubjects);
       
-      // 获取配置
-      const config = await APIService.getModelConfig();
+      // 保存到后端
+      await APIService.saveSubjects({
+        characterSubjects,
+        sceneSubjects: updatedSceneSubjects,
+        
+      });
       
-      // 使用主体信息而不是角色信息
-      const characterSubjectsInfo = characterSubjects.length > 0 
-        ? characterSubjects.map(subject => 
-            `@${subject.name}: ${subject.tag} (${subject.description})`
-          ).join('\n')
-        : characters.map(char => 
-            `@${char.name}: ${char.appearance}`
-          ).join('\n');
+      // 同时保存单个场景主体图片（生成的图片，不需要下载）
+      await APIService.saveSubjectImage(sceneSubject.name, selectedImageUrl, 'scene', false);
       
-      const sceneSubjectsInfo = sceneSubjects.map(subject => 
-        `@${subject.name}: ${subject.tag} (${subject.description})`
-      ).join('\n');
-      
-      const systemPrompt = `You are a professional storyboard element analyst. Analyze each storyboard scene to identify required subjects and generate pure environment scene prompts.
-
-Known Character Subjects:
-${characterSubjectsInfo}
-
-Known Scene Subjects:
-${sceneSubjectsInfo}
-
-CRITICAL REQUIREMENTS FOR SCENE PROMPTS:
-1. ABSOLUTELY NO HUMAN-RELATED CONTENT: Never include person, people, character, man, woman, boy, girl, human, figure, silhouette, someone, individual, body parts (face, hand, arm, leg, head), or any human-related words
-2. ENVIRONMENT ONLY: Only describe buildings, weather, lighting, atmosphere, objects, furniture, decorations
-3. If the original text mentions human actions, describe only the environmental elements, completely ignore the humans
-4. Must be 100% pure environment description
-
-Tasks:
-1. Identify required character subjects by matching names exactly, return as "@+subject_name" format
-2. Identify required scene subjects by matching names exactly, return as "@+subject_name" format  
-3. Generate pure environment English prompts (absolutely no human descriptions)
-
-JSON Format:
-{
-  "storyboard_elements": [
-    {
-      "scene_index": scene_number,
-      "character_subjects": ["@character_name1", "@character_name2"],
-      "scene_subjects": ["@scene_name1", "@scene_name2"],
-      "scene_prompt": "masterpiece, best quality, ultra detailed, 8k, photorealistic, cinematic lighting, depth of field, [pure environment description, NO HUMANS]"
-    }
-  ]
-}`;
-
-      const storyboardsText = storyboards.map((storyboard, index) => 
-        `场景${index + 1}：
-小说片段：${fragments[index] || ''}
-分镜脚本：${storyboard}`
-      ).join('\n\n');
-
-      const characterSubjectNames = characterSubjects.length > 0 
-        ? characterSubjects.map(subject => subject.name).join('、')
-        : characters.map(char => char.name).join('、');
-      const sceneSubjectNames = sceneSubjects.map(subject => subject.name).join('、');
-      
-      const userPrompt = `请仔细分析以下分镜场景：
-
-${storyboardsText}
-
-主体识别指南：
-已知角色主体：${characterSubjectNames}
-已知场景主体：${sceneSubjectNames}
-
-分析步骤：
-1. 逐个阅读每个场景的小说片段和分镜脚本
-2. 在文本中查找角色主体名称：${characterSubjectNames}
-3. 在文本中查找场景主体名称：${sceneSubjectNames}
-4. 注意：即使使用代词（他、她、它），也要根据上下文推断具体角色主体
-5. 将识别出的主体名称以"@+名称"格式填入对应数组
-6. 根据分镜脚本中的场景描述，生成纯环境的英文提示词
-
-请返回完整的JSON格式结果，确保每个场景都有对应的分析。`;
-
-      const result = await APIService.chatCompletion([
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPrompt }
-      ], config, Math.min(4000, storyboards.length * 200));
-
-      const content = result.choices[0].message.content;
-      
-      try {
-        const parsedContent = JSON.parse(content);
-        const elements = parsedContent.storyboard_elements || [];
-        
-        // 过滤场景提示词中的人物相关词汇
-        const humanRelatedWords = [
-          'person', 'people', 'character', 'man', 'woman', 'boy', 'girl', 'human', 'figure', 'silhouette',
-          'someone', 'anyone', 'individual', 'being', 'body', 'face', 'hand', 'arm', 'leg', 'head',
-          '人物', '角色', '人影', '身影', '人', '男', '女', '他', '她', '它', '某人', '个人', '身体', '脸', '手', '腿', '头'
-        ];
-        
-        elements.forEach((element, index) => {
-          if (element.scene_prompt) {
-            let cleanPrompt = element.scene_prompt;
-            
-            // 移除人物相关词汇
-            humanRelatedWords.forEach(word => {
-              const regex = new RegExp(`\\b${word}\\b`, 'gi');
-              cleanPrompt = cleanPrompt.replace(regex, '');
-            });
-            
-            // 清理多余的空格和标点
-            cleanPrompt = cleanPrompt.replace(/\s+/g, ' ').replace(/,\s*,/g, ',').trim();
-            
-            // 如果清理后提示词太短，使用默认提示词
-            if (cleanPrompt.length < 50) {
-              cleanPrompt = "masterpiece, best quality, ultra detailed, 8k, photorealistic, cinematic lighting, detailed background, empty environment, atmospheric lighting";
-            }
-            
-            element.scene_prompt = cleanPrompt;
-            console.log(`场景${index + 1}清理后的提示词:`, cleanPrompt);
-          }
-        });
-        
-        // 确保数量匹配
-        while (elements.length < storyboards.length) {
-          elements.push({
-            scene_index: elements.length + 1,
-            characters: [],
-            scene_prompt: "masterpiece, best quality, ultra detailed, 8k, photorealistic, cinematic lighting, detailed background, empty environment"
-          });
-        }
-        if (elements.length > storyboards.length) {
-          elements.splice(storyboards.length);
-        }
-        
-        // 保存分镜元素分析结果
-        await APIService.saveStoryboardElements(elements);
-        
-        // 统计识别到的角色数量
-        const totalCharacters = elements.reduce((total, element) => {
-          return total + (element.characters ? element.characters.length : 0);
-        }, 0);
-        
-        const scenesWithCharacters = elements.filter(element => 
-          element.characters && element.characters.length > 0
-        ).length;
-        
-        showToast(`分镜元素分析完成！共${elements.length}个场景，识别到${totalCharacters}个角色实例，${scenesWithCharacters}个场景包含角色`);
-        
-        // 调试信息
-        console.log('分镜元素分析结果:', elements);
-        elements.forEach((element, index) => {
-          console.log(`场景${index + 1}:`, {
-            characters: element.characters,
-            scene_prompt: element.scene_prompt?.substring(0, 100) + '...'
-          });
-        });
-        
-      } catch (parseError) {
-        console.error('JSON解析失败:', parseError);
-        showToast('分镜元素分析结果解析失败，请重试');
-      }
+      showToast(`场景图片已成功保存到${sceneSubject.name}`);
       
     } catch (error) {
-      console.error('Error analyzing storyboard elements:', error);
-      showToast(`分镜元素分析失败: ${(error as Error).message}`);
+      console.error('Error saving scene image:', error);
+      showToast(`保存场景图片失败: ${(error as Error).message}`);
     }
   };
 
-  // 一键生成全部图片
-  const handleGenerateAllImages = async () => {
-    try {
-      showToast('开始一键生成全部图片，请等待...');
-      
-      // 检查是否有画面描述
-      if (sceneDescriptions.length === 0 || sceneDescriptions.every(desc => !desc || desc.trim() === '')) {
-        showToast('请先生成画面描述');
-        return;
-      }
-      
-      // 获取EasyAI API Key
-      const config = await APIService.getModelConfig();
-      const API_KEY = config.easyaiApiKey;
-      
-      if (!API_KEY) {
-        throw new Error('EasyAI API Key未配置，请在初始化页面配置');
-      }
-
-      // 重置所有图片为占位符
-      const placeholderImages = fragments.map(() => "http://localhost:1198/images/placeholder.png");
-      setImages(placeholderImages);
-
-      // 批量生成图片
-      const updatedImages = [...placeholderImages];
-      let successCount = 0;
-      let failCount = 0;
-
-      for (let i = 0; i < fragments.length; i++) {
-        try {
-          // 使用画面描述作为提示词
-          const prompt = sceneDescriptions[i];
-          if (!prompt || prompt.trim() === '') {
-            showToast(`第${i + 1}个片段缺少画面描述，跳过`);
-            failCount++;
-            continue;
-          }
-
-          showToast(`正在生成第${i + 1}/${fragments.length}张图片...`);
-
-          const result = await APIService.generateImage(prompt, API_KEY);
-          
-          if (result.data && result.data.length > 0) {
-            const imageUrl = result.data[0].url;
-            
-            // 保存图片到temp文件夹
-            await APIService.saveImage(i, imageUrl, sceneDescriptions[i] || '');
-            
-            updatedImages[i] = safeImageUrl(`${imageUrl}?v=${Date.now()}`);
-            successCount++;
-            
-            // 实时更新图片显示
-            setImages([...updatedImages]);
-          } else {
-            failCount++;
-            console.error(`Image ${i} generation failed: No data returned`);
-          }
-          
-          // 添加延迟避免API限制
-          if (i < fragments.length - 1) {
-            await new Promise(resolve => setTimeout(resolve, 1500));
-          }
-        } catch (error) {
-          failCount++;
-          console.error(`Error generating image ${i}:`, error);
-        }
-      }
-
-      showToast(`一键生成全部图片完成！成功: ${successCount}张，失败: ${failCount}张`);
-      console.log('All images generation completed');
-    } catch (error) {
-      showToast(`一键生成失败: ${(error as Error).message}`);
-      console.error('Error generating all images:', error);
-    }
-  };
 
   // 生成音频
   const handleGenerateAudio = () => {
@@ -1397,439 +1895,53 @@ ${storyboardsText}
 
   // 生成美术风格指南
   const handleGenerateArtStyleGuide = async () => {
-    try {
-      if (!currentProject) {
-        showToast('请先选择或创建项目');
-        return;
-      }
-
-      showToast('开始生成美术风格指南...');
-      
-      const response = await APIService.generateArtStyleGuide({
-        projectType: '短片',
-        storyTheme: storySummary || fullStoryContent || '悬疑故事',
-        targetAudience: '成年观众',
-        emotionalTone: '神秘紧张',
-        timePeriod: '现代',
-        locationStyle: '都市',
-        projectName: currentProject.name
-      });
-
-      // 显示生成的美术风格指南
-      const styleWindow = window.open('', '_blank', 'width=900,height=700,scrollbars=yes');
-      if (styleWindow) {
-        styleWindow.document.write(`
-          <html>
-            <head>
-              <title>${currentProject.name} - 美术风格指南</title>
-              <style>
-                body { font-family: Arial, sans-serif; padding: 20px; line-height: 1.6; }
-                h1 { color: #333; border-bottom: 2px solid #e83e8c; padding-bottom: 10px; }
-                pre { background: #f8f9fa; padding: 15px; border-radius: 5px; white-space: pre-wrap; }
-                .save-btn { 
-                  background: #28a745; color: white; border: none; padding: 10px 20px; 
-                  border-radius: 5px; cursor: pointer; margin-top: 20px; 
-                }
-              </style>
-            </head>
-            <body>
-              <h1>🎨 ${currentProject.name} - 美术风格指南</h1>
-              <h3>项目信息：</h3>
-              <p><strong>项目类型：</strong>短片</p>
-              <p><strong>故事主题：</strong>${storySummary || fullStoryContent || '悬疑故事'}</p>
-              <h3>美术风格指南：</h3>
-              <pre>${response.artStyleGuide}</pre>
-              <button class="save-btn" onclick="window.close()">关闭</button>
-            </body>
-          </html>
-        `);
-      }
-
-      // 保存美术风格指南
-      const artStyleGuide = {
-        projectId: currentProject.name,
-        projectName: currentProject.name,
-        overallVisualStyle: {
-          artisticPosition: '待解析',
-          visualReferences: [],
-          aestheticConcept: '待解析',
-          themeAlignment: '待解析'
-        },
-        colorScheme: {
-          primaryColors: [],
-          secondaryColors: [],
-          sceneVariations: {},
-          emotionalFunction: '待解析',
-          colorValues: {}
-        },
-        compositionAndCinematography: {
-          compositionPrinciples: '待解析',
-          cameraMovementStyle: '待解析',
-          depthOfFieldUsage: '待解析',
-          lightingShadowHandling: '待解析'
-        },
-        characterDesignGuidance: {
-          characterStyling: '待解析',
-          costumeDesign: '待解析',
-          makeupAndHair: '待解析',
-          propsDesign: '待解析'
-        },
-        sceneDesignGuidance: {
-          sceneDesignStyle: '待解析',
-          setAndPropsRules: '待解析',
-          materialAndTexture: '待解析',
-          spatialLayering: '待解析'
-        },
-        technicalImplementation: {
-          shootingRequirements: '待解析',
-          postColorGrading: '待解析',
-          effectsStyleGuide: '待解析',
-          qualityControl: response.artStyleGuide
-        }
-      };
-
-      await APIService.saveArtStyleGuide(artStyleGuide, currentProject.name);
-      showToast(`${currentProject.name}的美术风格指南已生成并保存！`);
-      
-    } catch (error) {
-      console.error('Failed to generate art style guide:', error);
-      showToast('美术风格指南生成失败，请检查网络连接');
-    }
+    await generateArtStyleGuideHandler({
+       currentProject,
+       fullStoryContent,
+     });
   };
 
   // 生成场景音效设计
   const handleGenerateSceneAudio = async (sceneIndex: number) => {
-    try {
-      const sceneSubject = sceneSubjects[sceneIndex];
-      showToast(`开始为${sceneSubject.name}生成音效设计...`);
-      
-      const sceneDesc = sceneSubject.description || sceneSubject.tag || sceneSubject.name;
-
-      const response = await APIService.generateEnvironmentAudioDesign({
-        sceneDescription: sceneDesc,
-        timeSetting: '夜晚',
-        location: '户外',
-        weather: '晴朗',
-        mood: '神秘',
-        duration: '2-3分钟',
-        projectName: currentProject?.name || 'default'
-      });
-
-      // 显示生成的音效设计
-      const audioWindow = window.open('', '_blank', 'width=800,height=600,scrollbars=yes');
-      if (audioWindow) {
-        audioWindow.document.write(`
-          <html>
-            <head>
-              <title>${sceneSubject.name} - 音效设计方案</title>
-              <style>
-                body { font-family: Arial, sans-serif; padding: 20px; line-height: 1.6; }
-                h1 { color: #333; border-bottom: 2px solid #fd7e14; padding-bottom: 10px; }
-                pre { background: #f8f9fa; padding: 15px; border-radius: 5px; white-space: pre-wrap; }
-                .save-btn { 
-                  background: #28a745; color: white; border: none; padding: 10px 20px; 
-                  border-radius: 5px; cursor: pointer; margin-top: 20px; 
-                }
-              </style>
-            </head>
-            <body>
-              <h1>🔊 ${sceneSubject.name} - 音效设计方案</h1>
-              <h3>场景描述：</h3>
-              <p>${sceneDesc}</p>
-              <h3>音效设计：</h3>
-              <pre>${response.audioDesign}</pre>
-              <button class="save-btn" onclick="window.close()">关闭</button>
-            </body>
-          </html>
-        `);
-      }
-
-      // 保存音效设计
-      const sceneId = `scene_${sceneIndex + 1}`;
-      const audioDesign = {
-        sceneId,
-        sceneName: sceneSubject.name,
-        mainEnvironmentAudio: {
-          baseAmbient: [],
-          volumeLevels: '待解析',
-          frequencyRange: '待解析',
-          duration: '2-3分钟'
-        },
-        backgroundAudio: {
-          distantSounds: [],
-          midRangeSounds: [],
-          nearSounds: [],
-          volumeBalance: '待解析'
-        },
-        specialEffects: {
-          emotionalAudio: [],
-          dramaticTension: [],
-          transitions: [],
-          storySpecific: []
-        },
-        technicalSpecs: {
-          recordingEquipment: '待解析',
-          postProcessing: '待解析',
-          stereoPositioning: '待解析',
-          mixingRatios: '待解析'
-        },
-        productionAdvice: {
-          sourceMaterials: '待解析',
-          recordingTechniques: '待解析',
-          postProductionWorkflow: '待解析',
-          qualityStandards: response.audioDesign
-        }
-      };
-
-      await APIService.saveEnvironmentAudioDesign(sceneId, audioDesign, currentProject?.name || 'default');
-      showToast(`${sceneSubject.name}的音效设计已生成并保存！`);
-      
-    } catch (error) {
-      console.error('Failed to generate audio design:', error);
-      showToast('音效设计生成失败，请检查网络连接');
-    }
+    await generateSceneAudioHandler({
+      sceneIndex,
+      sceneSubjects,
+      currentProject,
+    });
   };
 
   // 生成分镜台词
   const handleGenerateSceneDialogue = async (sceneIndex: number) => {
-    try {
-      const storyboard = storyboards[sceneIndex];
-      const sceneDescription = sceneDescriptions[sceneIndex];
-      showToast(`开始为分镜${sceneIndex + 1}生成台词...`);
-      
-      const charactersText = characters.map(c => c.name).join('、');
-      const sceneDesc = sceneDescription || storyboard || `分镜${sceneIndex + 1}`;
+    await generateSceneDialogueHandler({
+      sceneIndex,
+      storyboards,
+      sceneDescriptions,
+      characters,
+      fullStoryContent,
+      currentProject,
+    });
+  };
 
-      const response = await APIService.generateSceneDialogue({
-        sceneDescription: sceneDesc,
-        characters: charactersText,
-        storyContext: storySummary || fullStoryContent || '短片故事',
-        emotionalTone: '自然',
-        sceneDuration: '2-3分钟',
-        projectName: currentProject?.name || 'default'
-      });
-
-      // 显示生成的台词
-      const dialogueWindow = window.open('', '_blank', 'width=800,height=600,scrollbars=yes');
-      if (dialogueWindow) {
-        dialogueWindow.document.write(`
-          <html>
-            <head>
-              <title>分镜${sceneIndex + 1} - 台词方案</title>
-              <style>
-                body { font-family: Arial, sans-serif; padding: 20px; line-height: 1.6; }
-                h1 { color: #333; border-bottom: 2px solid #17a2b8; padding-bottom: 10px; }
-                pre { background: #f8f9fa; padding: 15px; border-radius: 5px; white-space: pre-wrap; }
-                .save-btn { 
-                  background: #28a745; color: white; border: none; padding: 10px 20px; 
-                  border-radius: 5px; cursor: pointer; margin-top: 20px; 
-                }
-              </style>
-            </head>
-            <body>
-              <h1>💬 分镜${sceneIndex + 1} - 台词方案</h1>
-              <h3>场景描述：</h3>
-              <p>${sceneDesc}</p>
-              <h3>生成的台词：</h3>
-              <pre>${response.dialogue}</pre>
-              <button class="save-btn" onclick="window.close()">关闭</button>
-            </body>
-          </html>
-        `);
-      }
-
-      // 保存台词
-      const sceneId = `scene_${sceneIndex + 1}`;
-      const dialogue = {
-        sceneId,
-        sceneName: `分镜${sceneIndex + 1}`,
-        mainDialogue: [],
-        technicalAnalysis: {
-          emotionalFocus: '自然',
-          toneAndRhythm: '待分析',
-          pausesAndEmphasis: '待分析',
-          visualCoordination: '待分析'
-        },
-        performanceGuidance: {
-          innerThoughts: '待分析',
-          bodyLanguage: '待分析',
-          eyesAndExpression: '待分析',
-          characterInteraction: '待分析'
-        },
-        alternatives: []
-      };
-
-      await APIService.saveSceneDialogue(sceneId, dialogue, currentProject?.name || 'default');
-      showToast(`分镜${sceneIndex + 1}的台词已生成并保存！`);
-      
-    } catch (error) {
-      console.error('Failed to generate dialogue:', error);
-      showToast('台词生成失败，请检查网络连接');
-    }
+  // 生成场景音效
+  const handleGenerateSoundEffect = async (sceneIndex: number) => {
+    await generateSoundEffectHandler({
+      sceneIndex,
+      storyboards,
+      sceneDescriptions,
+      currentProject,
+      soundEffects,
+      setSoundEffects,
+      setIsGeneratingSoundEffect,
+    });
   };
 
   // 生成角色音色设计
   const handleGenerateCharacterVoiceDesign = async (characterIndex: number) => {
-    try {
-      const character = characters[characterIndex];
-      showToast(`开始为${character.name}生成音色设计...`);
-      
-      const characterInfo = `
-角色名称: ${character.name}
-性别: ${character.gender}
-年龄: ${character.age}
-外貌: ${character.appearance}
-性格: ${character.personality || '未描述'}
-角色定位: ${character.role || '主要角色'}
-      `.trim();
-
-      const response = await APIService.generateCharacterVoiceDesign({
-        characterInfo,
-        sceneContext: '通用场景',
-        emotionalState: '正常状态',
-        projectName: currentProject?.name || 'default'
-      });
-
-      // 生成音频示例
-      showToast('正在生成音色示例音频...');
-      const sampleText = `大家好，我是${character.name}。${character.personality ? character.personality.substring(0, 50) : '很高兴认识大家。'}`;
-      
-      try {
-        const audioResponse = await APIService.generateCharacterVoiceAudio(
-          character.name.replace(/\s+/g, '_').toLowerCase(),
-          sampleText,
-          {
-            gender: character.gender === '女性' ? 'female' : 'male',
-            rate: '+35%',
-            pitch: '+0Hz'
-          }
-        );
-
-        // 显示生成的音色设计和音频播放器
-        const voiceDesignWindow = window.open('', '_blank', 'width=800,height=700,scrollbars=yes');
-        if (voiceDesignWindow) {
-          voiceDesignWindow.document.write(`
-            <html>
-              <head>
-                <title>${character.name} - 音色设计方案</title>
-                <style>
-                  body { font-family: Arial, sans-serif; padding: 20px; line-height: 1.6; }
-                  h1 { color: #333; border-bottom: 2px solid #007bff; padding-bottom: 10px; }
-                  pre { background: #f8f9fa; padding: 15px; border-radius: 5px; white-space: pre-wrap; }
-                  .audio-section { 
-                    background: #e3f2fd; padding: 15px; border-radius: 5px; margin: 20px 0;
-                    border-left: 4px solid #2196f3;
-                  }
-                  .save-btn { 
-                    background: #28a745; color: white; border: none; padding: 10px 20px; 
-                    border-radius: 5px; cursor: pointer; margin-top: 20px; margin-right: 10px;
-                  }
-                  .play-btn {
-                    background: #007bff; color: white; border: none; padding: 8px 16px;
-                    border-radius: 5px; cursor: pointer; margin-right: 10px;
-                  }
-                  audio { width: 100%; margin-top: 10px; }
-                </style>
-              </head>
-              <body>
-                <h1>🎤 ${character.name} - 音色设计方案</h1>
-                
-                <div class="audio-section">
-                  <h3>🔊 音色示例</h3>
-                  <p><strong>示例文本：</strong>${sampleText}</p>
-                  <audio controls>
-                    <source src="http://localhost:1198${audioResponse.audioUrl}" type="audio/mpeg">
-                    您的浏览器不支持音频播放。
-                  </audio>
-                  <br><br>
-                  <button class="play-btn" onclick="document.querySelector('audio').play()">▶️ 播放</button>
-                  <button class="play-btn" onclick="document.querySelector('audio').pause()">⏸️ 暂停</button>
-                </div>
-                
-                <h3>📋 音色设计详情</h3>
-                <pre>${response.voiceDesign}</pre>
-                
-                <button class="save-btn" onclick="window.close()">关闭</button>
-              </body>
-            </html>
-          `);
-        }
-        
-        showToast(`${character.name}的音色设计和音频示例生成完成！`);
-        
-      } catch (audioError) {
-        console.error('Audio generation failed:', audioError);
-        
-        // 如果音频生成失败，仍然显示音色设计
-        const voiceDesignWindow = window.open('', '_blank', 'width=800,height=600,scrollbars=yes');
-        if (voiceDesignWindow) {
-          voiceDesignWindow.document.write(`
-            <html>
-              <head>
-                <title>${character.name} - 音色设计方案</title>
-                <style>
-                  body { font-family: Arial, sans-serif; padding: 20px; line-height: 1.6; }
-                  h1 { color: #333; border-bottom: 2px solid #007bff; padding-bottom: 10px; }
-                  pre { background: #f8f9fa; padding: 15px; border-radius: 5px; white-space: pre-wrap; }
-                  .error-note { background: #fff3cd; padding: 10px; border-radius: 5px; margin: 10px 0; border-left: 4px solid #ffc107; }
-                  .save-btn { 
-                    background: #28a745; color: white; border: none; padding: 10px 20px; 
-                    border-radius: 5px; cursor: pointer; margin-top: 20px; 
-                  }
-                </style>
-              </head>
-              <body>
-                <h1>🎤 ${character.name} - 音色设计方案</h1>
-                <div class="error-note">
-                  ⚠️ 音频生成失败，但音色设计方案已生成。请检查网络连接或稍后重试音频功能。
-                </div>
-                <pre>${response.voiceDesign}</pre>
-                <button class="save-btn" onclick="window.close()">关闭</button>
-              </body>
-            </html>
-          `);
-        }
-        
-        showToast(`${character.name}的音色设计生成完成（音频生成失败）`);
-      }
-
-      // 保存音色设计
-      const characterId = character.name.replace(/\s+/g, '_').toLowerCase();
-      const voiceProfile = {
-        characterId,
-        characterName: character.name,
-        basicTone: {
-          pitchRange: '待解析',
-          speechRate: 180,
-          volumeControl: '中等音量',
-          voiceQuality: '清亮'
-        },
-        emotionalExpression: {
-          happy: '音调上扬',
-          angry: '音调降低',
-          sad: '音调下沉',
-          nervous: '音调不稳'
-        },
-        technicalGuidance: {
-          breathingControl: '深呼吸控制',
-          pronunciation: '清晰发音',
-          emotionalLayers: '层次分明',
-          voiceDistinction: '独特音色'
-        },
-        references: {
-          similarCharacters: [],
-          recommendedActors: [],
-          technicalRequirements: response.voiceDesign
-        }
-      };
-
-      await APIService.saveCharacterVoiceDesign(characterId, voiceProfile, currentProject?.name || 'default');
-      showToast(`${character.name}的音色设计已生成并保存！`);
-      
-    } catch (error) {
-      console.error('Failed to generate voice design:', error);
-      showToast('音色设计生成失败，请检查网络连接');
-    }
+    await generateCharacterVoiceDesignHandler({
+      characterIndex,
+      characters,
+      currentProject,
+    });
   };
 
 
@@ -1867,6 +1979,20 @@ ${storyboardsText}
                   🎨 美术风格
                 </button>
               )}
+              <button
+                onClick={() => setShowProjectSettingsModal(true)}
+                style={{
+                  backgroundColor: '#28a745',
+                  color: 'white',
+                  border: 'none',
+                  padding: '8px 16px',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontSize: '14px'
+                }}
+              >
+                ⚙️ 项目设置
+              </button>
               <button
                 onClick={() => setShowProjectModal(true)}
                 style={{
@@ -1910,20 +2036,31 @@ ${storyboardsText}
       </div>
 
       <div className="button-container">
-        <button onClick={generateStoryAndCharacters} disabled={isLoading} className="generate-story">
-          {isLoading ? '生成中...' : '生成故事梗概、角色和场景主体'}
-        </button>
-        <button onClick={generateSceneStoryboards} className="generate-storyboard" disabled={characters.length === 0}>
+        <div className="story-generation-section">
+          <button 
+            onClick={() => {
+              setDataSourceModalType('story');
+              setShowDataSourceModal(true);
+            }} 
+            disabled={isLoading} 
+            className="generate-story"
+          >
+            {isLoading ? '生成中...' : '生成角色和场景主体'}
+          </button>
+        </div>
+        <button 
+          onClick={() => {
+            setDataSourceModalType('storyboard');
+            setShowDataSourceModal(true);
+          }} 
+          className="generate-storyboard" 
+          disabled={characters.length === 0}
+        >
           生成分镜脚本
         </button>
-        <button onClick={handleAnalyzeStoryboardElements} className="analyze-elements" disabled={storyboards.length === 0 || characters.length === 0}>
-          分析分镜元素
-        </button>
-
         {loaded && (
           <>
-            <button onClick={handleGenerateAllImages} className="generate-all">一键生成全部图片</button>
-            <button onClick={handleGenerateAudio} className="generate-audio">生成音频</button>
+            <button onClick={handleGenerateAudio} className="generate-audio">生成音效</button>
           </>
         )}
       </div>
@@ -1932,37 +2069,55 @@ ${storyboardsText}
       <SubjectCreationModal
         isOpen={isCreatingSubject}
         mode={subjectCreationMode}
-        onClose={() => setIsCreatingSubject(false)}
+        onClose={() => {
+          setIsCreatingSubject(false);
+          setPrefilledSubjectData(null);
+        }}
         onCreateCharacter={createCharacterSubject}
         onCreateScene={createSceneSubject}
         loraList={loraList}
         isLoadingLora={isLoadingLora}
+        currentProject={currentProject}
+        prefilledData={prefilledSubjectData}
       />
 
-      {/* 故事与场景管理 */}
+      {/* 项目设置模态框 */}
+      <ProjectSettingsModal
+        isOpen={showProjectSettingsModal}
+        onClose={() => setShowProjectSettingsModal(false)}
+        currentProject={currentProject}
+        onUpdateProject={updateProjectSettings}
+      />
+
+      {/* 数据源选择模态框 */}
+      <DataSourceModal
+        isOpen={showDataSourceModal}
+        onClose={() => setShowDataSourceModal(false)}
+        onSelect={handleDataSourceSelection}
+        title={dataSourceModalType === 'story' ? '选择故事数据来源' : '选择分镜数据来源'}
+        description={dataSourceModalType === 'story' 
+          ? '您可以选择从最近的文件加载故事数据，或者重新调用AI接口生成。'
+          : '您可以选择从最近的文件加载分镜数据，或者重新调用AI接口生成。'
+        }
+        fileOptionDescription={dataSourceModalType === 'story'
+          ? '从 latest_llm_response_story_generation.json 加载'
+          : '从 complete_storyboard.json 加载'
+        }
+        apiOptionDescription="重新调用AI接口生成"
+      />
+
+
+
+      {/* 场景管理 */}
       <StorySceneManagement
-        storySummary={storySummary}
-        novelScenes={novelScenes}
-        fullStoryContent={fullStoryContent}
         sceneSubjects={sceneSubjects}
         characters={characters}
-        onStorySummaryChange={setStorySummary}
-        onNovelScenesChange={updateNovelScenes}
-        onFullStoryContentChange={(content) => {
-          setFullStoryContent(content);
-          // 自动保存到项目（防抖处理）
-          if (content.trim()) {
-            clearTimeout((window as any).storyAutoSaveTimeout);
-            (window as any).storyAutoSaveTimeout = setTimeout(() => {
-              saveFullStoryToProject();
-            }, 2000); // 2秒后自动保存
-          }
-        }}
         onSceneSubjectChange={handleSceneSubjectChange}
         onCreateNewSceneSubject={createNewSceneSubject}
         onUploadSubjectImage={uploadSubjectImage}
         onPreviewImage={handlePreviewImage}
         onGenerateSceneImage={handleGenerateSceneImage}
+        onSceneImageSelect={handleSceneImageSelect}
         onGenerateSceneAudio={handleGenerateSceneAudio}
         scenePanelCollapsed={scenePanelCollapsed}
         onToggleScenePanel={() => setScenePanelCollapsed(!scenePanelCollapsed)}
@@ -1973,22 +2128,26 @@ ${storyboardsText}
         }))}
         loraList={loraList}
         isLoadingLora={isLoadingLora}
+        currentProject={currentProject}
+        additionalSceneImages={additionalSceneImages}
+        isGeneratingSceneImage={isGeneratingSceneImage}
       />
 
 
 
+
+
       {/* 角色主体管理区域 */}
-      {characters.length > 0 && (
-        <div className="character-subjects-panel">
-          <div className="panel-header">
-            <h2>角色主体管理 ({characters.length}个)</h2>
-            <button 
-              className="collapse-btn"
-              onClick={() => setCharacterPanelCollapsed(!characterPanelCollapsed)}
-            >
-              {characterPanelCollapsed ? '展开' : '折叠'}
-            </button>
-          </div>
+      <div className="character-subjects-panel">
+        <div className="panel-header">
+          <h2>角色主体管理 ({characters.length}个)</h2>
+          <button 
+            className="collapse-btn"
+            onClick={() => setCharacterPanelCollapsed(!characterPanelCollapsed)}
+          >
+            {characterPanelCollapsed ? '展开' : '折叠'}
+          </button>
+        </div>
           
           {!characterPanelCollapsed && (
             <>
@@ -2097,6 +2256,48 @@ ${storyboardsText}
                     </button>
                   </div>
 
+                  {/* 音色上传部分 */}
+                  <div className="character-voice-section">
+                    <label>角色音色文件:</label>
+                    <div className="voice-upload-area">
+                      {character.voiceFile ? (
+                        <div className="voice-file-info">
+                          <div className="voice-file-name">
+                            🎵 {character.voiceFileName || '音色文件'}
+                          </div>
+                          <div className="voice-file-actions">
+                            <button 
+                              onClick={() => handlePlayVoiceFile(index)}
+                              className="play-voice-btn"
+                            >
+                              播放
+                            </button>
+                            <button 
+                              onClick={() => handleRemoveVoiceFile(index)}
+                              className="remove-voice-btn"
+                            >
+                              删除
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button 
+                          onClick={() => handleUploadVoiceFile(index)}
+                          className="upload-voice-btn"
+                        >
+                          📁 上传音色文件
+                        </button>
+                      )}
+                    </div>
+                    <textarea
+                      value={character.voiceDescription || ''}
+                      onChange={(e) => handleCharacterChange(index, 'voiceDescription', e.target.value)}
+                      placeholder="音色描述（如：温柔甜美、低沉磁性、清脆活泼等）"
+                      rows={2}
+                      className="voice-description"
+                    />
+                  </div>
+
                   {/* React Select LoRA选择器 */}
                   <ReactSelectLoraSelector
                     loraList={loraList}
@@ -2113,12 +2314,12 @@ ${storyboardsText}
                     {/* 主要图片 */}
                     <div className="main-character-image">
                       <Image
-                        src={safeImageUrl(characterImages[index] || "http://localhost:1198/images/placeholder.png")}
+                        src={safeImageUrl(characterImages[index] || createPlaceholderSVG())}
                         alt={`${character.name} 主图`}
                         width={120}
                         height={160}
                         className="character-image"
-                        onClick={() => handlePreviewImage(characterImages[index] || "http://localhost:1198/images/placeholder.png")}
+                        onClick={() => handlePreviewImage(characterImages[index] || createPlaceholderSVG())}
                         style={{ cursor: 'pointer' }}
                       />
                       <div className="image-label">主要参考</div>
@@ -2152,6 +2353,35 @@ ${storyboardsText}
                     </div>
                   </div>
                   
+                  {/* 角色图片尺寸配置 */}
+                  <ImageDimensionSelector
+                    aspectRatio={characterImageDimensions[index]?.aspectRatio || getDefaultImageConfig(currentProject).aspectRatio}
+                    quality={characterImageDimensions[index]?.quality || getDefaultImageConfig(currentProject).quality}
+                    buttonText="角色图片尺寸设置"
+                    currentProject={currentProject}
+                    onAspectRatioChange={(aspectRatio) => {
+                      const availableQualities = Object.keys(QUALITY_OPTIONS[aspectRatio] || {});
+                      const defaultQuality = availableQualities[0] || getDefaultImageConfig(currentProject).quality;
+                      setCharacterImageDimensions(prev => ({
+                        ...prev,
+                        [index]: {
+                          aspectRatio,
+                          quality: defaultQuality
+                        }
+                      }));
+                    }}
+                    onQualityChange={(quality) => {
+                      const currentAspectRatio = characterImageDimensions[index]?.aspectRatio || getDefaultImageConfig(currentProject).aspectRatio;
+                      setCharacterImageDimensions(prev => ({
+                        ...prev,
+                        [index]: {
+                          aspectRatio: currentAspectRatio,
+                          quality
+                        }
+                      }));
+                    }}
+                  />
+                  
                   <div className="character-image-buttons">
                     <button 
                       onClick={() => handleGenerateCharacterImage(index)} 
@@ -2183,56 +2413,93 @@ ${storyboardsText}
                     </button>
                   </div>
                   
-                  {/* 临时生成的图片选择器 */}
+                  {/* 使用通用的MultiImageSelector组件替换临时图片选择器 */}
                   {character.tempImages && character.tempImages.length > 1 && (
                     <div className="character-temp-images">
-                      <h5 style={{ margin: '10px 0 5px 0', fontSize: '12px', color: '#495057' }}>
-                        选择一张作为角色主图:
-                      </h5>
-                      <div style={{ 
-                        display: 'grid', 
-                        gridTemplateColumns: 'repeat(auto-fit, minmax(60px, 1fr))', 
-                        gap: '8px',
-                        marginBottom: '10px'
-                      }}>
-                        {character.tempImages.map((imageUrl: string, imgIndex: number) => (
-                          <div 
-                            key={imgIndex}
-                            style={{
-                              position: 'relative',
-                              cursor: 'pointer',
-                              border: '2px solid #dee2e6',
-                              borderRadius: '4px',
-                              overflow: 'hidden',
-                              transition: 'border-color 0.2s'
-                            }}
-                            onClick={() => handleCharacterImageSelect(index, imageUrl)}
-                            onMouseEnter={(e) => e.currentTarget.style.borderColor = '#007bff'}
-                            onMouseLeave={(e) => e.currentTarget.style.borderColor = '#dee2e6'}
-                          >
-                            <Image
-                              src={safeImageUrl(imageUrl)}
-                              alt={`${character.name} 选项 ${imgIndex + 1}`}
-                              width={60}
-                              height={75}
-                              style={{ objectFit: 'cover' }}
-                            />
-                            <div style={{
-                              position: 'absolute',
-                              bottom: 0,
-                              left: 0,
-                              right: 0,
-                              backgroundColor: 'rgba(0, 0, 0, 0.7)',
-                              color: 'white',
-                              fontSize: '10px',
-                              textAlign: 'center',
-                              padding: '2px'
-                            }}>
-                              选择
-                            </div>
-                          </div>
-                        ))}
-                      </div>
+                      <MultiImageSelector
+                        images={character.tempImages}
+                        multiSelect={true}
+                        showAddButtons={true}
+                        mode="inline"
+                        onImageSelect={(selectedImageUrl: string) => {
+                          handleCharacterImageSelect(index, selectedImageUrl);
+                        }}
+                        onMultiSelect={(selectedImageUrls: string[]) => {
+                          if (selectedImageUrls.length > 0) {
+                            handleCharacterImageSelect(index, selectedImageUrls[0]);
+                          }
+                        }}
+                        onAddToSubject={async (selectedImageUrls: string[]) => {
+                          try {
+                            const character = characters[index];
+                            const characterSubject = characterSubjects.find(subject => 
+                              subject.name === character.name || subject.description.includes(character.name)
+                            );
+                            
+                            if (!characterSubject) {
+                              showToast(`未找到角色"${character.name}"对应的主体，请先创建角色主体`);
+                              return;
+                            }
+                            
+                            const updatedCharacterSubjects = characterSubjects.map(subject => {
+                              if (subject.id === characterSubject.id) {
+                                return {
+                                  ...subject,
+                                  subjectImages: [...(subject.subjectImages || []), ...selectedImageUrls]
+                                };
+                              }
+                              return subject;
+                            });
+                            
+                            setCharacterSubjects(updatedCharacterSubjects);
+                            await APIService.saveSubjects({
+                              characterSubjects: updatedCharacterSubjects,
+                              sceneSubjects,
+                              
+                            });
+                            
+                            showToast(`成功添加${selectedImageUrls.length}张图片到"${character.name}"的主体图`);
+                          } catch (error) {
+                            console.error('Error adding images to subject:', error);
+                            showToast(`添加到主体图失败: ${(error as Error).message}`);
+                          }
+                        }}
+                        onAddToReference={async (selectedImageUrls: string[]) => {
+                          try {
+                            const character = characters[index];
+                            const characterSubject = characterSubjects.find(subject => 
+                              subject.name === character.name || subject.description.includes(character.name)
+                            );
+                            
+                            if (!characterSubject) {
+                              showToast(`未找到角色"${character.name}"对应的主体，请先创建角色主体`);
+                              return;
+                            }
+                            
+                            const updatedCharacterSubjects = characterSubjects.map(subject => {
+                              if (subject.id === characterSubject.id) {
+                                return {
+                                  ...subject,
+                                  referenceImages: [...(subject.referenceImages || []), ...selectedImageUrls]
+                                };
+                              }
+                              return subject;
+                            });
+                            
+                            setCharacterSubjects(updatedCharacterSubjects);
+                            await APIService.saveSubjects({
+                              characterSubjects: updatedCharacterSubjects,
+                              sceneSubjects,
+                              
+                            });
+                            
+                            showToast(`成功添加${selectedImageUrls.length}张图片到"${character.name}"的参考图`);
+                          } catch (error) {
+                            console.error('Error adding images to reference:', error);
+                            showToast(`添加到参考图失败: ${(error as Error).message}`);
+                          }
+                        }}
+                      />
                     </div>
                   )}
                       </div>
@@ -2243,7 +2510,7 @@ ${storyboardsText}
             </>
           )}
         </div>
-      )}
+     
 
       {/* 分镜片段 */}
       {loaded && (
@@ -2284,6 +2551,13 @@ ${storyboardsText}
               characterSubjects={characterSubjects}
               sceneSubjects={sceneSubjects}
               isSmartGenerating={isSmartGenerating[index]}
+              currentProject={currentProject}
+              characterDialogue={characterDialogues[index] || ''}
+              soundEffect={soundEffects[index] || ''}
+              onGenerateSoundEffect={handleGenerateSoundEffect}
+              isGeneratingSoundEffect={isGeneratingSoundEffect}
+              onSceneSubjectChange={handleSceneSubjectChangeFromCard}
+              onCreateSceneSubject={handleCreateSceneSubjectFromCard}
             />
           ))}
         </>
@@ -2413,9 +2687,9 @@ ${storyboardsText}
               </div>
             )}
             
-            {projects.length > 0 && (
-              <div style={{ marginBottom: '30px' }}>
-                <h4 style={{ marginBottom: '15px' }}>选择现有项目</h4>
+            <div style={{ marginBottom: '30px' }}>
+              <h4 style={{ marginBottom: '15px' }}>选择现有项目</h4>
+              {projects.length > 0 ? (
                 <div style={{ maxHeight: '200px', overflow: 'auto' }}>
                   {projects.map(project => (
                     <button
@@ -2440,9 +2714,23 @@ ${storyboardsText}
                     </button>
                   ))}
                 </div>
-                <hr style={{ margin: '20px 0' }} />
-              </div>
-            )}
+              ) : (
+                <div style={{ 
+                  padding: '15px', 
+                  border: '1px dashed #ccc', 
+                  borderRadius: '6px', 
+                  textAlign: 'center',
+                  color: '#666',
+                  backgroundColor: '#f8f9fa'
+                }}>
+                  <p>📂 暂无现有项目</p>
+                  <p style={{ fontSize: '12px', margin: '5px 0 0 0' }}>
+                    项目数组长度: {projects.length}
+                  </p>
+                </div>
+              )}
+              <hr style={{ margin: '20px 0' }} />
+            </div>
 
             <div>
               <h4 style={{ marginBottom: '15px' }}>创建新项目</h4>
@@ -2514,6 +2802,30 @@ ${storyboardsText}
       )}
 
 
+
+      {/* 多图片预览组件 */}
+      <MultiImagePreview
+        isOpen={multiImagePreview.isOpen}
+        images={multiImagePreview.images}
+        title={multiImagePreview.title}
+        onSelect={multiImagePreview.onSelect}
+        onMultiSelect={multiImagePreview.onMultiSelect}
+        onAddToSubject={handleAddToSubjectImage}
+        onAddToReference={handleAddToReferenceImage}
+        onClose={() => setMultiImagePreview(prev => ({ ...prev, isOpen: false }))}
+        selectedIndex={multiImagePreview.selectedIndex}
+        multiSelect={multiImagePreview.multiSelect}
+        showAddButtons={multiImagePreview.showAddButtons}
+      />
+
+      {/* 主体管理库组件 */}
+      <SubjectManager
+        isOpen={showSubjectManager}
+        onClose={() => setShowSubjectManager(false)}
+        onLoraSelected={handleLoraSelected}
+        characterPrompt={currentCharacterPrompt}
+        scenePrompt={currentScenePrompt}
+      />
 
       <ToastContainer />
     </div>

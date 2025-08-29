@@ -4,26 +4,37 @@ import { APIService } from '../services/api';
 import { buildImageUrl, generateSubjectTag } from '../utils/helpers';
 import { showToast } from '../app/toast';
 
-export const useSubjects = () => {
+export const useSubjects = (currentProject?: any) => {
   const [characterSubjects, setCharacterSubjects] = useState<Subject[]>([]);
   const [sceneSubjects, setSceneSubjects] = useState<Subject[]>([]);
-  const [novelScenes, setNovelScenes] = useState<string>('');
   const [isCreatingSubject, setIsCreatingSubject] = useState<boolean>(false);
   const [subjectCreationMode, setSubjectCreationMode] = useState<'character' | 'scene' | null>(null);
 
-  // 初始化时加载主体数据
+  // 当项目变化时重新加载主体数据
   React.useEffect(() => {
-    loadSubjects();
-  }, []);
+    if (currentProject?.name) {
+      loadSubjects(currentProject.name);
+    }
+  }, [currentProject?.name]);
 
   // 加载主体数据
-  const loadSubjects = useCallback(async () => {
+  const loadSubjects = useCallback(async (projectName?: string) => {
     try {
-      const data = await APIService.loadSubjects();
+      // 优先使用传入的项目名称，其次使用当前项目名称，最后使用全局项目名称或默认值
+      const nameToUse = projectName || currentProject?.name || (window as any).currentProjectName || '猛鬼世界';
+      console.log('Loading subjects for project:', nameToUse);
+      console.log('Current project:', currentProject);
+      console.log('Global project name:', (window as any).currentProjectName);
+      
+      const data = await APIService.loadSubjects(nameToUse);
       setCharacterSubjects(data.characterSubjects || []);
       setSceneSubjects(data.sceneSubjects || []);
-      setNovelScenes(data.novelScenes || '');
-      console.log('Subjects loaded successfully:', data);
+      
+      console.log('Subjects loaded successfully:', {
+        characterSubjects: data.characterSubjects?.length || 0,
+        sceneSubjects: data.sceneSubjects?.length || 0,
+        projectName: nameToUse
+      });
       
       // 同时加载保存的图片数据
       const savedImages = await APIService.loadSavedImages();
@@ -34,31 +45,31 @@ export const useSubjects = () => {
     } catch (error) {
       console.error('Error loading subjects:', error);
     }
-  }, []);
+  }, [currentProject]);
 
   // 保存主体数据
   const saveSubjects = useCallback(async () => {
     try {
       await APIService.saveSubjects({
         characterSubjects,
-        sceneSubjects,
-        novelScenes
+        sceneSubjects
       });
       console.log('Subjects saved successfully');
     } catch (error) {
       console.error('Error saving subjects:', error);
     }
-  }, [characterSubjects, sceneSubjects, novelScenes]);
+  }, [characterSubjects, sceneSubjects]);
 
   // 创建角色主体
-  const createCharacterSubject = useCallback(async (name: string, description: string, images: string[]) => {
+  const createCharacterSubject = useCallback(async (name: string, description: string, images: string[], lora?: string) => {
     const newSubject: Subject = {
       id: Date.now(),
       name,
       description,
       tag: generateSubjectTag(description, name),
       images,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      selectedLora: lora
     };
     
     const newCharacterSubjects = [...characterSubjects, newSubject];
@@ -68,31 +79,33 @@ export const useSubjects = () => {
     try {
       await APIService.saveSubjects({
         characterSubjects: newCharacterSubjects,
-        sceneSubjects,
-        novelScenes
+        sceneSubjects
       });
       console.log('Character subject created and saved successfully');
       
       // 保存主体图片
       for (const imageUrl of images) {
-        await APIService.saveSubjectImage(newSubject.id.toString(), imageUrl, 'character');
+        // 判断是否为上传图片（通过临时存储标识）
+        const isUploadedImage = (window as any).tempSubjectImages && (window as any).tempSubjectImages.includes(imageUrl);
+        await APIService.saveSubjectImage(newSubject.id.toString(), imageUrl, 'character', isUploadedImage);
       }
     } catch (error) {
       console.error('Error saving character subject:', error);
     }
     
     return newSubject;
-  }, [characterSubjects, sceneSubjects, novelScenes]);
+  }, [characterSubjects, sceneSubjects]);
 
   // 创建场景主体
-  const createSceneSubject = useCallback(async (name: string, description: string, images: string[]) => {
+  const createSceneSubject = useCallback(async (name: string, description: string, images: string[], lora?: string) => {
     const newSubject: Subject = {
       id: Date.now(),
       name,
       description,
       tag: generateSubjectTag(description, name),
       images,
-      createdAt: new Date().toISOString()
+      createdAt: new Date().toISOString(),
+      selectedLora: lora
     };
     
     const newSceneSubjects = [...sceneSubjects, newSubject];
@@ -102,21 +115,22 @@ export const useSubjects = () => {
     try {
       await APIService.saveSubjects({
         characterSubjects,
-        sceneSubjects: newSceneSubjects,
-        novelScenes
+        sceneSubjects: newSceneSubjects
       });
       console.log('Scene subject created and saved successfully');
       
       // 保存主体图片
       for (const imageUrl of images) {
-        await APIService.saveSubjectImage(newSubject.id.toString(), imageUrl, 'scene');
+        // 判断是否为上传图片（通过临时存储标识）
+        const isUploadedImage = (window as any).tempSubjectImages && (window as any).tempSubjectImages.includes(imageUrl);
+        await APIService.saveSubjectImage(newSubject.id.toString(), imageUrl, 'scene', isUploadedImage);
       }
     } catch (error) {
       console.error('Error saving scene subject:', error);
     }
     
     return newSubject;
-  }, [characterSubjects, sceneSubjects, novelScenes]);
+  }, [characterSubjects, sceneSubjects]);
 
   // 创建新场景主体
   const createNewSceneSubject = useCallback(() => {
@@ -180,14 +194,11 @@ export const useSubjects = () => {
     input.click();
   }, [characterSubjects, sceneSubjects, saveSubjects]);
 
-  // 更新小说场景
-  const updateNovelScenes = useCallback(async (scenes: string) => {
-    setNovelScenes(scenes);
-    await saveSubjects();
-  }, [saveSubjects]);
+
 
   // 更新场景主体
   const updateSceneSubject = useCallback(async (index: number, field: string, value: string) => {
+    console.log('更新场景主体:', { index, field, value });
     const newSceneSubjects = [...sceneSubjects];
     if (newSceneSubjects[index]) {
       newSceneSubjects[index] = {
@@ -203,23 +214,45 @@ export const useSubjects = () => {
         );
       }
       
+      console.log('更新后的场景主体:', newSceneSubjects[index]);
+      
       setSceneSubjects(newSceneSubjects);
       await saveSubjects();
     }
   }, [sceneSubjects, saveSubjects]);
 
+  // 更新角色主体
+  const updateCharacterSubject = useCallback(async (index: number, field: string, value: string) => {
+    const newCharacterSubjects = [...characterSubjects];
+    if (newCharacterSubjects[index]) {
+      newCharacterSubjects[index] = {
+        ...newCharacterSubjects[index],
+        [field]: value
+      };
+      
+      // 如果更新的是描述或名称，同时更新标签
+      if (field === 'description' || field === 'name') {
+        newCharacterSubjects[index].tag = generateSubjectTag(
+          newCharacterSubjects[index].description, 
+          newCharacterSubjects[index].name
+        );
+      }
+      
+      setCharacterSubjects(newCharacterSubjects);
+      await saveSubjects();
+    }
+  }, [characterSubjects, saveSubjects]);
+
   return {
     // 状态
     characterSubjects,
     sceneSubjects,
-    novelScenes,
     isCreatingSubject,
     subjectCreationMode,
     
     // 设置器
     setCharacterSubjects,
     setSceneSubjects,
-    setNovelScenes,
     setIsCreatingSubject,
     setSubjectCreationMode,
     
@@ -231,7 +264,7 @@ export const useSubjects = () => {
     createNewSceneSubject,
     createNewCharacterSubject,
     uploadSubjectImage,
-    updateNovelScenes,
     updateSceneSubject,
+    updateCharacterSubject,
   };
 };
