@@ -161,6 +161,14 @@ class LatestStoryboardParser:
                 if 'elements_layout' in scene:
                     standardized_scene['elements_layout'] = scene['elements_layout']
                 
+                # 添加images字段如果存在
+                if 'images' in scene:
+                    standardized_scene['images'] = scene['images']
+                
+                # 添加generation_info字段如果存在
+                if 'generation_info' in scene:
+                    standardized_scene['generation_info'] = scene['generation_info']
+                
                 standardized_scenes.append(standardized_scene)
             
             return standardized_scenes

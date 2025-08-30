@@ -470,24 +470,24 @@ def api_load_story_info():
     return load_character_info()
 
 
-# 画面描述相关接口
-@app.route("/api/save/scene/descriptions", methods=["POST"])
-def api_save_scene_descriptions():
-    from backend.rest_handler.scene_description import save_scene_descriptions
+# 分镜描述相关接口
+@app.route("/api/save/storyboard/descriptions", methods=["POST"])
+def api_save_storyboard_descriptions():
+    from backend.rest_handler.storyboard import save_scene_descriptions
 
     return save_scene_descriptions()
 
 
-@app.route("/api/load/scene/descriptions", methods=["GET"])
-def api_load_scene_descriptions():
-    from backend.rest_handler.scene_description import load_scene_descriptions
+@app.route("/api/load/storyboard/descriptions", methods=["GET"])
+def api_load_storyboard_descriptions():
+    from backend.rest_handler.storyboard import load_scene_descriptions
 
     return load_scene_descriptions()
 
 
-@app.route("/api/save/scene/description", methods=["POST"])
-def api_save_single_scene_description():
-    from backend.rest_handler.scene_description import save_single_scene_description
+@app.route("/api/save/storyboard/description", methods=["POST"])
+def api_save_single_storyboard_description():
+    from backend.rest_handler.storyboard import save_single_scene_description
 
     return save_single_scene_description()
 
@@ -495,14 +495,14 @@ def api_save_single_scene_description():
 # 分镜脚本相关接口
 @app.route("/api/save/storyboards", methods=["POST"])
 def api_save_storyboards():
-    from backend.rest_handler.scene_description import save_storyboards
+    from backend.rest_handler.storyboard import save_storyboards
 
     return save_storyboards()
 
 
 @app.route("/api/load/storyboards", methods=["GET"])
 def api_load_storyboards():
-    from backend.rest_handler.scene_description import load_storyboards
+    from backend.rest_handler.storyboard import load_storyboards
 
     return load_storyboards()
 
@@ -511,7 +511,7 @@ def api_load_storyboards():
 def api_save_complete_storyboard():
     logging.info("API路由 /api/save/complete/storyboard 被调用")
     try:
-        from backend.rest_handler.scene_description import save_complete_storyboard_data
+        from backend.rest_handler.storyboard import save_complete_storyboard_data
         logging.info("成功导入 save_complete_storyboard_data 函数")
         result = save_complete_storyboard_data()
         logging.info(f"函数调用成功，返回: {result}")
@@ -525,7 +525,7 @@ def api_save_complete_storyboard():
 
 @app.route("/api/load/complete/storyboard", methods=["GET"])
 def api_load_complete_storyboard():
-    from backend.rest_handler.scene_description import load_complete_storyboard_data
+    from backend.rest_handler.storyboard import load_complete_storyboard_data
 
     return load_complete_storyboard_data()
 
@@ -535,7 +535,7 @@ def api_save_llm_complete_response():
     """保存LLM完整响应数据"""
     import traceback
     try:
-        from backend.rest_handler.scene_description import save_llm_complete_response
+        from backend.rest_handler.storyboard import save_llm_complete_response
         logging.info("调用save_llm_complete_response函数")
         result = save_llm_complete_response()
         logging.info(f"save_llm_complete_response返回结果: {result}")
@@ -549,27 +549,27 @@ def api_save_llm_complete_response():
 @app.route("/api/load/story/generation", methods=["GET"])
 def api_load_story_generation_data():
     """从latest_llm_response_story_generation.json加载角色和场景数据"""
-    from backend.rest_handler.scene_description import load_story_generation_data
+    from backend.rest_handler.storyboard import load_story_generation_data
     return load_story_generation_data()
 
 
 @app.route("/api/load/character/images", methods=["GET"])
 def api_load_character_images():
-    from backend.rest_handler.scene_description import load_character_images
+    from backend.rest_handler.storyboard import load_character_images
 
     return load_character_images()
 
 
 @app.route("/api/save/character/image", methods=["POST"])
 def api_save_character_image():
-    from backend.rest_handler.scene_description import save_character_image
+    from backend.rest_handler.storyboard import save_character_image
 
     return save_character_image()
 
 
 @app.route("/api/upload/character/image", methods=["POST"])
 def api_upload_character_image():
-    from backend.rest_handler.scene_description import upload_character_image
+    from backend.rest_handler.storyboard import upload_character_image
 
     return upload_character_image()
 
@@ -577,27 +577,33 @@ def api_upload_character_image():
 # 新增：场景图片上传接口，保持与前端一致的端点
 @app.route("/api/upload/scene/image", methods=["POST"])
 def api_upload_scene_image():
-    from backend.rest_handler.scene_description import upload_scene_image
+    from backend.rest_handler.storyboard import upload_scene_image
 
     return upload_scene_image()
 
 # 新增：场景图片加载接口
 @app.route("/api/load/scene/images", methods=["GET"])
 def api_load_scene_images():
-    from backend.rest_handler.scene_description import load_scene_images
+    from backend.rest_handler.storyboard import load_scene_images
     return load_scene_images()
+
+# 新增：更新单个场景文件接口
+@app.route("/api/update/scene/file", methods=["POST"])
+def api_update_scene_file():
+    from backend.rest_handler.storyboard import update_scene_file
+    return update_scene_file()
 
 
 @app.route("/api/upload/character/voice", methods=["POST"])
 def api_upload_character_voice():
-    from backend.rest_handler.scene_description import upload_character_voice
+    from backend.rest_handler.storyboard import upload_character_voice
 
     return upload_character_voice()
 
 
 @app.route("/api/save/storyboard/elements", methods=["POST"])
 def api_save_storyboard_elements():
-    from backend.rest_handler.scene_description import save_storyboard_elements
+    from backend.rest_handler.storyboard import save_storyboard_elements
 
     return save_storyboard_elements()
 
@@ -607,7 +613,7 @@ def api_save_storyboard_elements():
 
 @app.route("/api/load/file/data", methods=["GET"])
 def api_load_file_data():
-    from backend.rest_handler.scene_description import load_file_data
+    from backend.rest_handler.storyboard import load_file_data
 
     return load_file_data()
 
@@ -676,6 +682,9 @@ def api_load_images():
     from backend.rest_handler.image_saver import load_images_from_temp
 
     return load_images_from_temp()
+
+
+
 
 
 @app.route("/videos/<path:filename>")
@@ -834,6 +843,13 @@ def api_civitai_test():
 def api_save_scene_lora():
     from backend.rest_handler.scene_lora import save_scene_lora
     return save_scene_lora()
+
+
+# 更新单个scene文件接口
+@app.route("/api/update/scene/<int:scene_index>", methods=["POST"])
+def api_update_scene(scene_index):
+    from backend.rest_handler.scene_update import update_single_scene
+    return update_single_scene(scene_index)
 
 
 @app.route("/api/load/scene/lora/selections", methods=["GET"])

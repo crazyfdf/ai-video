@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import { Subject } from '../types';
 import { APIService } from '../services/api';
 import { buildImageUrl, generateSubjectTag } from '../utils/helpers';
@@ -7,8 +7,11 @@ import { showToast } from '../app/toast';
 export const useSubjects = (currentProject?: any) => {
   const [characterSubjects, setCharacterSubjects] = useState<Subject[]>([]);
   const [sceneSubjects, setSceneSubjects] = useState<Subject[]>([]);
-  const [isCreatingSubject, setIsCreatingSubject] = useState<boolean>(false);
+  const [isCreatingSubject, setIsCreatingSubject] = useState(false);
   const [subjectCreationMode, setSubjectCreationMode] = useState<'character' | 'scene' | null>(null);
+  
+  // 防抖定时器引用
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // 当项目变化时重新加载主体数据
   React.useEffect(() => {
@@ -60,6 +63,36 @@ export const useSubjects = (currentProject?: any) => {
     }
   }, [characterSubjects, sceneSubjects]);
 
+  // 防抖保存函数
+  const debouncedSaveSubjects = useCallback((newCharacterSubjects?: Subject[], newSceneSubjects?: Subject[]) => {
+    // 清除之前的定时器
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+    
+    // 设置新的定时器，800ms后执行保存
+    saveTimeoutRef.current = setTimeout(async () => {
+      try {
+        await APIService.saveSubjects({
+          characterSubjects: newCharacterSubjects || characterSubjects,
+          sceneSubjects: newSceneSubjects || sceneSubjects
+        });
+        console.log('Subjects saved successfully');
+      } catch (error) {
+        console.error('Error saving subjects:', error);
+      }
+    }, 800);
+  }, [characterSubjects, sceneSubjects]);
+
+  // 清理定时器
+  React.useEffect(() => {
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+    };
+  }, []);
+
   // 创建角色主体
   const createCharacterSubject = useCallback(async (name: string, description: string, images: string[], lora?: string) => {
     const newSubject: Subject = {
@@ -87,7 +120,7 @@ export const useSubjects = (currentProject?: any) => {
       for (const imageUrl of images) {
         // 判断是否为上传图片（通过临时存储标识）
         const isUploadedImage = (window as any).tempSubjectImages && (window as any).tempSubjectImages.includes(imageUrl);
-        await APIService.saveSubjectImage(newSubject.id.toString(), imageUrl, 'character', isUploadedImage);
+        await APIService.saveSubjectImage(newSubject.name, imageUrl, 'character', isUploadedImage);
       }
     } catch (error) {
       console.error('Error saving character subject:', error);
@@ -123,7 +156,7 @@ export const useSubjects = (currentProject?: any) => {
       for (const imageUrl of images) {
         // 判断是否为上传图片（通过临时存储标识）
         const isUploadedImage = (window as any).tempSubjectImages && (window as any).tempSubjectImages.includes(imageUrl);
-        await APIService.saveSubjectImage(newSubject.id.toString(), imageUrl, 'scene', isUploadedImage);
+        await APIService.saveSubjectImage(newSubject.name, imageUrl, 'scene', isUploadedImage);
       }
     } catch (error) {
       console.error('Error saving scene subject:', error);
@@ -206,20 +239,13 @@ export const useSubjects = (currentProject?: any) => {
         [field]: value
       };
       
-      // 如果更新的是描述或名称，同时更新标签
-      if (field === 'description' || field === 'name') {
-        newSceneSubjects[index].tag = generateSubjectTag(
-          newSceneSubjects[index].description, 
-          newSceneSubjects[index].name
-        );
-      }
-      
       console.log('更新后的场景主体:', newSceneSubjects[index]);
       
       setSceneSubjects(newSceneSubjects);
-      await saveSubjects();
+      // 传递最新状态给防抖函数
+      debouncedSaveSubjects(undefined, newSceneSubjects);
     }
-  }, [sceneSubjects, saveSubjects]);
+  }, [sceneSubjects, debouncedSaveSubjects]);
 
   // 更新角色主体
   const updateCharacterSubject = useCallback(async (index: number, field: string, value: string) => {
@@ -230,18 +256,11 @@ export const useSubjects = (currentProject?: any) => {
         [field]: value
       };
       
-      // 如果更新的是描述或名称，同时更新标签
-      if (field === 'description' || field === 'name') {
-        newCharacterSubjects[index].tag = generateSubjectTag(
-          newCharacterSubjects[index].description, 
-          newCharacterSubjects[index].name
-        );
-      }
-      
       setCharacterSubjects(newCharacterSubjects);
-      await saveSubjects();
+      // 传递最新状态给防抖函数
+      debouncedSaveSubjects(newCharacterSubjects, undefined);
     }
-  }, [characterSubjects, saveSubjects]);
+  }, [characterSubjects, debouncedSaveSubjects]);
 
   return {
     // 状态

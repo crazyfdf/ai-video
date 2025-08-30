@@ -7,18 +7,18 @@ from backend.util.latest_storyboard_parser import LatestStoryboardParser
 
 
 def load_storyboard_elements():
-    """从各个scene_X.json文件中加载分镜元素数据"""
+    """从各个storyboard_X.json文件中加载分镜元素数据"""
     try:
         project_name = request.args.get('projectName')
         if not project_name:
             return jsonify({'error': 'No project selected'}), 400
-        project_dir = get_project_dir(project_name, 'scene_descriptions')
+        project_dir = get_project_dir(project_name, 'storyboard')
         
         storyboard_elements = []
         
-        # 扫描scene_descriptions目录中的所有scene_X.json文件
+        # 扫描storyboard目录中的所有storyboard_X.json文件
         if os.path.exists(project_dir):
-            scene_files = [f for f in os.listdir(project_dir) if f.startswith('scene_') and f.endswith('.json')]
+            scene_files = [f for f in os.listdir(project_dir) if f.startswith('storyboard_') and f.endswith('.json')]
             scene_files.sort(key=lambda x: int(x.split('_')[1].split('.')[0]))  # 按数字排序
             
             for scene_file in scene_files:
@@ -49,7 +49,8 @@ def load_storyboard_elements():
         
         # 如果没有找到scene文件，尝试从latest_llm_response_storyboard_generation.json加载作为备用
         if not storyboard_elements:
-            llm_response_file = os.path.join(project_dir, 'latest_llm_response_storyboard_generation.json')
+            project_base_dir = get_project_dir(project_name, '')
+            llm_response_file = os.path.join(project_base_dir, 'latest_llm_response_storyboard_generation.json')
             
             if os.path.exists(llm_response_file):
                 with open(llm_response_file, 'r', encoding='utf-8') as f:
@@ -82,11 +83,13 @@ def load_storyboard_elements():
         for element in storyboard_elements:
             # 为角色主体补充图片信息
             for char_subject in element['character_subjects']:
-                char_subject['image'] = char_subject.get('image', '')
+                if isinstance(char_subject, dict):
+                    char_subject['image'] = char_subject.get('image', '')
             
             # 为场景主体补充图片信息
             for scene_subject in element['scene_subjects']:
-                scene_subject['image'] = scene_subject.get('image', '')
+                if isinstance(scene_subject, dict):
+                    scene_subject['image'] = scene_subject.get('image', '')
         
         return jsonify(storyboard_elements), 200
         

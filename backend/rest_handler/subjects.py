@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import time
 from datetime import datetime
 
@@ -32,12 +33,45 @@ def save_subjects():
         os.makedirs(character_dir, exist_ok=True)
         os.makedirs(scene_dir, exist_ok=True)
         
-        # 保存角色主体到character文件夹（保持现有逻辑）
+        # 清理旧文件 - 删除所有现有的主体文件，然后重新保存
+        # 这样可以处理主体名称变更、删除等情况
+        for filename in os.listdir(character_dir):
+            if filename.endswith('.json'):
+                os.remove(os.path.join(character_dir, filename))
+        
+        for filename in os.listdir(scene_dir):
+            if filename.endswith('.json'):
+                os.remove(os.path.join(scene_dir, filename))
+        
+        # 检测并处理主体名称冲突
+        used_char_names = set()
+        used_scene_names = set()
+        
+        # 保存角色主体到character文件夹（使用角色名称命名）
         for i, char_subject in enumerate(character_subjects):
-            char_file = os.path.join(character_dir, f"character_{i}.json")
+            char_name = char_subject.get('name', f'character_{i}').strip()
+            # 清理文件名中的非法字符，保留中文字符
+            import re
+            # 移除Windows文件名中的非法字符，但保留中文、字母、数字、空格、连字符、下划线
+            safe_char_name = re.sub(r'[<>:"/\\|?*]', '', char_name).strip()
+            if not safe_char_name:
+                safe_char_name = f'character_{i}'
+            
+            # 处理名称冲突
+            original_name = safe_char_name
+            counter = 1
+            while safe_char_name in used_char_names:
+                safe_char_name = f"{original_name}_{counter}"
+                counter += 1
+            used_char_names.add(safe_char_name)
+            
+            char_file = os.path.join(character_dir, f"{safe_char_name}.json")
             char_data = {
-                "name": char_subject.get('name', ''),
+                "id": char_subject.get('id', i),
+                "name": char_name,  # 直接使用用户输入的名称
                 "appearance": char_subject.get('description', ''),
+                "description": char_subject.get('description', ''),
+                "tag": char_subject.get('tag', ''),
                 "englishPrompt": char_subject.get('tag', ''),
                 "selectedLora": char_subject.get('selectedLora', ''),
                 "image_url": char_subject.get('images', [''])[0] if char_subject.get('images') else '',
@@ -45,18 +79,35 @@ def save_subjects():
                     "image_url": char_subject.get('images', [''])[0] if char_subject.get('images') else '',
                     "generated_at": char_subject.get('createdAt', ''),
                     "type": "ai_generated"
-                }] if char_subject.get('images') else []
+                }] if char_subject.get('images') else [],
+                "createdAt": char_subject.get('createdAt', '')
             }
             
             with open(char_file, "w", encoding="utf-8") as f:
                 json.dump(char_data, f, ensure_ascii=False, indent=2)
         
-        # 保存场景主体到scene文件夹
+        # 保存场景主体到scene文件夹（使用场景名称命名）
         for i, scene_subject in enumerate(scene_subjects):
-            scene_file = os.path.join(scene_dir, f"scene_{i}.json")
+            scene_name = scene_subject.get('name', f'scene_{i}').strip()
+            # 清理文件名中的非法字符，保留中文字符
+            import re
+            # 移除Windows文件名中的非法字符，但保留中文、字母、数字、空格、连字符、下划线
+            safe_scene_name = re.sub(r'[<>:"/\\|?*]', '', scene_name).strip()
+            if not safe_scene_name:
+                safe_scene_name = f'scene_{i}'
+            
+            # 处理名称冲突
+            original_name = safe_scene_name
+            counter = 1
+            while safe_scene_name in used_scene_names:
+                safe_scene_name = f"{original_name}_{counter}"
+                counter += 1
+            used_scene_names.add(safe_scene_name)
+            
+            scene_file = os.path.join(scene_dir, f"{safe_scene_name}.json")
             scene_data = {
                 "id": scene_subject.get('id', i),
-                "name": scene_subject.get('name', ''),
+                "name": scene_name,  # 直接使用用户输入的名称
                 "description": scene_subject.get('description', ''),
                 "tag": scene_subject.get('tag', ''),
                 "englishPrompt": scene_subject.get('tag', ''),
@@ -98,15 +149,15 @@ def load_subjects():
         
         # 直接从实际的文件夹结构加载数据（不再依赖subjects.json）
         character_dir = get_project_dir(project_name, "character")
-        scene_descriptions_dir = get_project_dir(project_name, "scene_descriptions")
+        # 场景主体统一从 scene 目录读取
         
         character_subjects = []
         scene_subjects = []
         
-        # 加载角色主体数据 - 从character文件夹中的character_X.json文件
+        # 加载角色主体数据 - 从character文件夹中的所有.json文件
         if os.path.exists(character_dir):
             for filename in os.listdir(character_dir):
-                if filename.startswith('character_') and filename.endswith('.json'):
+                if filename.endswith('.json'):
                     file_path = os.path.join(character_dir, filename)
                     try:
                         with open(file_path, "r", encoding="utf-8") as f:
@@ -131,8 +182,11 @@ def load_subjects():
                             if isinstance(first_image, dict):
                                 created_at = first_image.get("generated_at", "")
                         
+                        # 使用当前列表长度作为ID（角色文件使用名称命名，不是索引）
+                        file_id = len(character_subjects)
+                        
                         subject = {
-                            "id": int(filename.split('_')[1].split('.')[0]),  # 从文件名提取ID
+                            "id": file_id,
                             "name": char_data.get("name", ""),
                             "description": char_data.get("appearance", ""),
                             "tag": char_data.get("englishPrompt", ""),
@@ -148,72 +202,61 @@ def load_subjects():
                     except Exception as e:
                         logging.warning(f"Failed to load character file {filename}: {str(e)}")
         
-        # 加载场景主体数据 - 优先从scene文件夹加载
+        # 加载场景主体数据 - 从scene文件夹加载所有.json文件（使用场景名称命名）
         scene_dir = get_project_dir(project_name, "scene")
         if os.path.exists(scene_dir):
             for filename in os.listdir(scene_dir):
-                if filename.startswith('scene_') and filename.endswith('.json'):
+                if filename.endswith('.json'):
                     file_path = os.path.join(scene_dir, filename)
                     try:
                         with open(file_path, "r", encoding="utf-8") as f:
                             scene_data = json.load(f)
                         
-                        # 转换为Subject格式
-                        subject = {
-                            "id": scene_data.get("id", int(filename.split('_')[1].split('.')[0])),
-                            "name": scene_data.get("name", ""),
-                            "description": scene_data.get("description", ""),
-                            "tag": scene_data.get("tag", ""),
-                            "images": [scene_data.get("image_url", "")] if scene_data.get("image_url") else [],
-                            "createdAt": scene_data.get("createdAt", ""),
-                            "selectedLora": scene_data.get("selectedLora", ""),
-                            "photo": scene_data.get("image_url", ""),
-                            "lora": scene_data.get("selectedLora", ""),
-                            "prompt": scene_data.get("englishPrompt", scene_data.get("tag", ""))
-                        }
-                        scene_subjects.append(subject)
+                        # 正确处理images字段 - 可能是对象数组或字符串数组
+                        images_list = []
+                        if scene_data.get("images") and isinstance(scene_data["images"], list):
+                            for img in scene_data["images"]:
+                                if isinstance(img, dict) and img.get("image_url"):
+                                    images_list.append(img["image_url"])
+                                elif isinstance(img, str):
+                                    images_list.append(img)
+                        elif scene_data.get("image_url"):
+                            images_list.append(scene_data["image_url"])
+                        
+                        # 获取创建时间
+                        created_at = ""
+                        if scene_data.get("images") and isinstance(scene_data["images"], list) and len(scene_data["images"]) > 0:
+                            first_image = scene_data["images"][0]
+                            if isinstance(first_image, dict):
+                                created_at = first_image.get("generated_at", "")
+                        if not created_at:
+                            created_at = scene_data.get("createdAt", "")
+                        
+                        # 使用当前列表长度作为ID（场景文件使用名称命名，不是索引）
+                        file_id = len(scene_subjects)
+                        
+                        # 确保场景主体数据有必要的字段
+                        if 'name' in scene_data:
+                            # 转换为Subject格式，优先使用originalName显示
+                            display_name = scene_data.get("originalName", scene_data.get("name", ""))
+                            subject = {
+                                "id": file_id,
+                                "name": display_name,  # 使用原始名称显示
+                                "description": scene_data.get("description", ""),
+                                "tag": scene_data.get("tag", scene_data.get("englishPrompt", "")),
+                                "images": images_list,
+                                "createdAt": created_at,
+                                "selectedLora": scene_data.get("selectedLora", ""),
+                                "photo": images_list[0] if images_list else "",
+                                "lora": scene_data.get("selectedLora", ""),
+                                "prompt": scene_data.get("englishPrompt", scene_data.get("tag", ""))
+                            }
+                            scene_subjects.append(subject)
                         
                     except Exception as e:
                         logging.warning(f"Failed to load scene file {filename}: {str(e)}")
         
-        # 如果scene文件夹没有数据，回退到从scene_descriptions文件夹加载（向后兼容）
-        if not scene_subjects and os.path.exists(scene_descriptions_dir):
-            for filename in os.listdir(scene_descriptions_dir):
-                if filename.startswith('scene_') and filename.endswith('.json'):
-                    file_path = os.path.join(scene_descriptions_dir, filename)
-                    try:
-                        with open(file_path, "r", encoding="utf-8") as f:
-                            scene_data = json.load(f)
-                        
-                        # 从required_elements中提取场景主体信息
-                        required_elements = scene_data.get("required_elements", {})
-                        scene_subjects_list = required_elements.get("scene_subjects", [])
-                        
-                        for scene_subject in scene_subjects_list:
-                            # 去掉@符号
-                            scene_name = scene_subject.replace("@", "")
-                            
-                            # 转换为Subject格式
-                            subject = {
-                                "id": scene_data.get("scene_id", 0),
-                                "name": scene_name,
-                                "description": required_elements.get("scene_prompt", ""),
-                                "tag": required_elements.get("scene_prompt", ""),
-                                "images": [],  # 场景图片需要从其他地方获取
-                                "createdAt": scene_data.get("generated_at", ""),
-                                "selectedLora": "",
-                                "photo": "",
-                                "lora": "",
-                                "prompt": required_elements.get("scene_prompt", "")
-                            }
-                            
-                            # 检查是否已经存在相同名称的场景主体
-                            existing_subject = next((s for s in scene_subjects if s["name"] == scene_name), None)
-                            if not existing_subject:
-                                scene_subjects.append(subject)
-                        
-                    except Exception as e:
-                        logging.warning(f"Failed to load scene file {filename}: {str(e)}")
+        
         
         # 尝试从旧的目录结构加载（向后兼容）
         old_characters_dir = get_project_dir(project_name, "characters")
@@ -363,56 +406,98 @@ def save_subject_image():
 
         # 将图片信息合并到对应的JSON文件中
         if subject_type == 'character':
-            # 查找角色JSON文件
-            character_files = [f for f in os.listdir(images_dir) if f.startswith('character_') and f.endswith('.json')]
+            # 查找角色JSON文件（按名称命名，支持中文）
             target_file = None
-            
-            for char_file in character_files:
-                char_path = os.path.join(images_dir, char_file)
+            target_data = None
+
+            # 1) 优先尝试直接根据名称匹配同名文件
+            safe_name = re.sub(r'[<>:"/\\|?*]', '', subject_id).strip()
+            direct_path = os.path.join(images_dir, f"{safe_name}.json")
+            if os.path.exists(direct_path):
+                target_file = direct_path
                 try:
-                    with open(char_path, 'r', encoding='utf-8') as f:
-                        char_data = json.load(f)
-                    if char_data.get('name') == subject_id:
-                        target_file = char_path
-                        break
-                except:
-                    continue
-            
+                    with open(target_file, 'r', encoding='utf-8') as f:
+                        target_data = json.load(f)
+                except Exception:
+                    target_data = {}
+
+            # 2) 回退：遍历所有.json文件，读取"name"字段匹配
+            if not target_file:
+                for fname in os.listdir(images_dir):
+                    if not fname.endswith('.json'):
+                        continue
+                    fpath = os.path.join(images_dir, fname)
+                    try:
+                        with open(fpath, 'r', encoding='utf-8') as f:
+                            data_json = json.load(f)
+                        if data_json.get('name') == subject_id:
+                            target_file = fpath
+                            target_data = data_json
+                            break
+                    except Exception:
+                        continue
+
             if target_file:
-                # 添加图片信息到角色文件
-                if 'images' not in char_data:
-                    char_data['images'] = []
-                char_data['images'].append(image_info)
-                
+                if 'images' not in target_data or not isinstance(target_data['images'], list):
+                    target_data['images'] = []
+                target_data['images'].append(image_info)
+                # 若主图为空则同步
+                if not target_data.get('image_url'):
+                    target_data['image_url'] = image_info.get('image_url') or image_info.get('local_url', '')
                 with open(target_file, 'w', encoding='utf-8') as f:
-                    json.dump(char_data, f, ensure_ascii=False, indent=2)
+                    json.dump(target_data, f, ensure_ascii=False, indent=2)
         else:
-            # 场景图片：查找对应的scene_X.json文件
-            scene_files = [f for f in os.listdir(images_dir) if f.startswith('scene_') and f.endswith('.json')]
-            
-            # 尝试从subject_id中提取场景序号
-            try:
-                if subject_id.isdigit():
-                    scene_id = int(subject_id)
-                else:
-                    # 如果subject_id不是数字，尝试从现有文件中找到匹配的
-                    scene_id = 1  # 默认为1
-                
-                scene_file = f"scene_{scene_id}.json"
-                scene_path = os.path.join(images_dir, scene_file)
-                
-                if os.path.exists(scene_path):
-                    with open(scene_path, 'r', encoding='utf-8') as f:
-                        scene_data = json.load(f)
-                    
-                    if 'images' not in scene_data:
-                        scene_data['images'] = []
-                    scene_data['images'].append(image_info)
-                    
-                    with open(scene_path, 'w', encoding='utf-8') as f:
-                        json.dump(scene_data, f, ensure_ascii=False, indent=2)
-            except:
-                logging.warning(f"Could not find scene file for subject_id: {subject_id}")
+            # 场景图片：按“场景主体名.json”保存
+            target_file = None
+            target_data = None
+
+            safe_name = re.sub(r'[<>:"/\\|?*]', '', subject_id).strip()
+            direct_path = os.path.join(images_dir, f"{safe_name}.json")
+            if os.path.exists(direct_path):
+                target_file = direct_path
+                try:
+                    with open(target_file, 'r', encoding='utf-8') as f:
+                        target_data = json.load(f)
+                except Exception:
+                    target_data = {}
+
+            if not target_file:
+                # 遍历所有.json，通过name匹配
+                for fname in os.listdir(images_dir):
+                    if not fname.endswith('.json'):
+                        continue
+                    fpath = os.path.join(images_dir, fname)
+                    try:
+                        with open(fpath, 'r', encoding='utf-8') as f:
+                            data_json = json.load(f)
+                        if data_json.get('name') == subject_id:
+                            target_file = fpath
+                            target_data = data_json
+                            break
+                    except Exception:
+                        continue
+
+            # 最后回退：如果subject_id是数字，兼容 scene_{id}.json
+            if not target_file and subject_id.isdigit():
+                fallback_path = os.path.join(images_dir, f"scene_{int(subject_id)}.json")
+                if os.path.exists(fallback_path):
+                    target_file = fallback_path
+                    try:
+                        with open(target_file, 'r', encoding='utf-8') as f:
+                            target_data = json.load(f)
+                    except Exception:
+                        target_data = {}
+
+            if target_file:
+                if 'images' not in target_data or not isinstance(target_data['images'], list):
+                    target_data['images'] = []
+                target_data['images'].append(image_info)
+                if not target_data.get('image_url'):
+                    target_data['image_url'] = image_info.get('image_url') or image_info.get('local_url', '')
+                with open(target_file, 'w', encoding='utf-8') as f:
+                    json.dump(target_data, f, ensure_ascii=False, indent=2)
+            else:
+                logging.warning(f"Could not find scene file for subject name/id: {subject_id}")
 
         logging.info(f"Subject image saved: subject {subject_id} (project {project_name})")
         return jsonify({'message': 'Subject image saved successfully', 'image_info': image_info}), 200
@@ -425,18 +510,19 @@ def save_subject_image():
 def load_subject_images():
     """加载主体图片（返回扁平列表）"""
     try:
-        project_name = request.args.get('project_name')
+        # 兼容 projectName 与 project_name 两种参数
+        project_name = request.args.get('projectName') or request.args.get('project_name')
         if not project_name:
-            return jsonify({'error': 'project_name is required'}), 400
+            return jsonify({'error': 'projectName is required'}), 400
         character_dir = get_project_dir(project_name, 'character')
-        scene_dir = get_project_dir(project_name, 'scene_descriptions')
+        scene_dir = get_project_dir(project_name, 'scene')
         
         results = []
         
         # 从角色文件加载图片
         if os.path.exists(character_dir):
             for filename in os.listdir(character_dir):
-                if filename.startswith('character_') and filename.endswith('.json'):
+                if filename.endswith('.json'):
                     char_path = os.path.join(character_dir, filename)
                     try:
                         with open(char_path, 'r', encoding='utf-8') as f:
@@ -444,7 +530,7 @@ def load_subject_images():
                         
                         # 提取角色的图片信息
                         char_name = char_data.get('name', '')
-                        char_index = filename.replace('character_', '').replace('.json', '')
+                        char_index = os.path.splitext(filename)[0]
                         
                         # 添加主图片（image_url）
                         if char_data.get('image_url'):
@@ -479,15 +565,15 @@ def load_subject_images():
         scene_dir = get_project_dir(project_name, 'scene')
         if os.path.exists(scene_dir):
             for filename in os.listdir(scene_dir):
-                if filename.startswith('scene_') and filename.endswith('.json'):
+                if filename.endswith('.json'):
                     scene_path = os.path.join(scene_dir, filename)
                     try:
                         with open(scene_path, 'r', encoding='utf-8') as f:
                             scene_data = json.load(f)
                         
                         # 提取场景的图片信息
-                        scene_name = scene_data.get('name', f'场景{filename.replace("scene_", "").replace(".json", "")}')
-                        scene_index = filename.replace('scene_', '').replace('.json', '')
+                        scene_name = scene_data.get('name', os.path.splitext(filename)[0])
+                        scene_index = os.path.splitext(filename)[0]
                         
                         # 添加主图片（image_url）
                         if scene_data.get('image_url'):
@@ -518,36 +604,7 @@ def load_subject_images():
                     except Exception as e:
                         logging.warning(f"Failed to read scene file {filename}: {e}")
         
-        # 如果scene文件夹没有数据，回退到scene_descriptions文件夹（向后兼容）
-        if not any(r['subject_type'] == 'scene' for r in results):
-            scene_descriptions_dir = get_project_dir(project_name, 'scene_descriptions')
-            if os.path.exists(scene_descriptions_dir):
-                for filename in os.listdir(scene_descriptions_dir):
-                    if filename.startswith('scene_') and filename.endswith('.json'):
-                        scene_path = os.path.join(scene_descriptions_dir, filename)
-                        try:
-                            with open(scene_path, 'r', encoding='utf-8') as f:
-                                scene_data = json.load(f)
-                            
-                            # 提取场景的图片信息
-                            scene_id = scene_data.get('scene_id', filename.replace('scene_', '').replace('.json', ''))
-                            
-                            # 添加场景图片（images字段）
-                            if scene_data.get('images'):
-                                for img in scene_data['images']:
-                                    if isinstance(img, dict):
-                                        image_info = {
-                                            'image_url': img.get('image_url', img.get('local_url', '')),
-                                            'subject_type': 'scene',
-                                            'subject_name': f'场景{scene_id}',
-                                            'subject_index': scene_id,
-                                            'saved_at': img.get('saved_at', ''),
-                                            'is_upload': img.get('is_upload', False),
-                                            'is_main_image': False
-                                        }
-                                        results.append(image_info)
-                        except Exception as e:
-                            logging.warning(f"Failed to read scene file {filename}: {e}")
+        
         
         # 按时间排序
         results.sort(key=lambda x: x.get('saved_at', ''), reverse=True)

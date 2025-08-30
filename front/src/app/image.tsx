@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import Image from 'next/image';
 import { ToastContainer } from "react-toastify";
 import { useStoryboard } from '../hooks/useStoryboard';
@@ -178,6 +178,97 @@ export default function AIImageGenerator() {
   const [isSmartGenerating, setIsSmartGenerating] = useState<{[key: number]: boolean}>({});
 
   // 角色图片生成尺寸状态
+  
+  // 角色信息保存防抖
+  const characterSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // 分镜脚本保存防抖
+  const storyboardSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // 场景描述保存防抖
+  const sceneDescriptionSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // 视频提示词保存防抖
+  const videoPromptSaveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  
+  // 防抖保存角色信息函数
+  const debouncedSaveCharacterInfo = useCallback((newCharacters: any[]) => {
+    // 清除之前的定时器
+    if (characterSaveTimeoutRef.current) {
+      clearTimeout(characterSaveTimeoutRef.current);
+    }
+    
+    // 设置新的定时器，800ms后执行保存
+    characterSaveTimeoutRef.current = setTimeout(async () => {
+      try {
+        await APIService.saveCharacterInfo({
+          summary: '',
+          characters: newCharacters
+        });
+        
+        // 自动保存到当前项目
+        if (currentProject) {
+          for (const character of newCharacters) {
+            await saveCharacterToProject(character);
+          }
+        }
+      } catch (error) {
+        console.error('Error saving character info:', error);
+      }
+    }, 800);
+  }, [currentProject]);
+  
+  // 防抖保存分镜脚本函数
+  const debouncedSaveStoryboards = useCallback((newStoryboards: string[]) => {
+    // 清除之前的定时器
+    if (storyboardSaveTimeoutRef.current) {
+      clearTimeout(storyboardSaveTimeoutRef.current);
+    }
+    
+    // 设置新的定时器，800ms后执行保存
+    storyboardSaveTimeoutRef.current = setTimeout(async () => {
+      try {
+        await APIService.saveStoryboards(newStoryboards);
+      } catch (error) {
+        console.error('Error saving storyboards:', error);
+      }
+    }, 800);
+  }, []);
+  
+  // 防抖保存场景描述函数
+  const debouncedSaveSceneDescriptions = useCallback((newDescriptions: string[]) => {
+    // 清除之前的定时器
+    if (sceneDescriptionSaveTimeoutRef.current) {
+      clearTimeout(sceneDescriptionSaveTimeoutRef.current);
+    }
+    
+    // 设置新的定时器，800ms后执行保存
+    sceneDescriptionSaveTimeoutRef.current = setTimeout(async () => {
+      try {
+        await APIService.saveSceneDescriptions(newDescriptions);
+      } catch (error) {
+        console.error('Error saving scene descriptions:', error);
+      }
+    }, 800);
+  }, []);
+  
+  // 防抖保存视频提示词函数
+  const debouncedSaveVideoPrompt = useCallback((index: number, value: string) => {
+    // 清除之前的定时器
+    if (videoPromptSaveTimeoutRef.current) {
+      clearTimeout(videoPromptSaveTimeoutRef.current);
+    }
+    
+    // 设置新的定时器，800ms后执行保存
+    videoPromptSaveTimeoutRef.current = setTimeout(async () => {
+      try {
+        await APIService.saveVideoPrompt(index, value);
+      } catch (error) {
+        console.error('Error saving video prompt:', error);
+      }
+    }, 800);
+  }, []);
+  
   const [characterImageDimensions, setCharacterImageDimensions] = useState<{[key: number]: {aspectRatio: string, quality: string}}>({});
 
   // 完整故事内容状态
@@ -434,6 +525,19 @@ export default function AIImageGenerator() {
         
         if (selectedProject) {
           console.log('🎯 设置当前项目:', selectedProject);
+          
+          // 加载项目设置（包括defaultSizeConfig）
+          try {
+            const projectSettings = await APIService.loadProjectSettings(selectedProject.name);
+            if (projectSettings && projectSettings.defaultSizeConfig) {
+              selectedProject.defaultSizeConfig = projectSettings.defaultSizeConfig;
+              selectedProject.novelContent = projectSettings.novelContent;
+              console.log('✅ 加载项目设置成功:', projectSettings.defaultSizeConfig);
+            }
+          } catch (error) {
+            console.warn('⚠️ 加载项目设置失败，使用默认配置:', error);
+          }
+          
           setCurrentProject(selectedProject);
           // 设置全局项目名称，供后端使用
           (window as any).currentProjectName = selectedProject.name;
@@ -523,6 +627,18 @@ export default function AIImageGenerator() {
   };
 
   const switchProject = async (project: Project) => {
+    // 加载项目设置（包括defaultSizeConfig）
+    try {
+      const projectSettings = await APIService.loadProjectSettings(project.name);
+      if (projectSettings && projectSettings.defaultSizeConfig) {
+        project.defaultSizeConfig = projectSettings.defaultSizeConfig;
+        project.novelContent = projectSettings.novelContent;
+        console.log('✅ 切换项目时加载设置成功:', projectSettings.defaultSizeConfig);
+      }
+    } catch (error) {
+      console.warn('⚠️ 切换项目时加载设置失败，使用默认配置:', error);
+    }
+    
     setCurrentProject(project);
     await loadProjectFiles(project.id);
     // 设置全局项目名称，供后端使用
@@ -751,46 +867,34 @@ export default function AIImageGenerator() {
   };
 
   // 处理分镜脚本变化
-  const handleStoryboardChange = async (index: number, value: string) => {
+  const handleStoryboardChange = useCallback((index: number, value: string) => {
     const newStoryboards = [...storyboards];
     newStoryboards[index] = value;
     setStoryboards(newStoryboards);
     
-    // 保存分镜脚本
-    try {
-      await APIService.saveStoryboards(newStoryboards);
-    } catch (error) {
-      console.error('Error saving storyboards:', error);
-    }
-  };
+    // 使用防抖保存分镜脚本
+    debouncedSaveStoryboards(newStoryboards);
+  }, [storyboards, debouncedSaveStoryboards]);
 
   // 处理场景描述变化
-  const handleSceneDescriptionChange = async (index: number, value: string) => {
+  const handleSceneDescriptionChange = useCallback((index: number, value: string) => {
     const newDescriptions = [...sceneDescriptions];
     newDescriptions[index] = value;
     setSceneDescriptions(newDescriptions);
     
-    // 保存场景描述
-    try {
-      await APIService.saveSceneDescriptions(newDescriptions);
-    } catch (error) {
-      console.error('Error saving scene descriptions:', error);
-    }
-  };
+    // 使用防抖保存场景描述
+    debouncedSaveSceneDescriptions(newDescriptions);
+  }, [sceneDescriptions, debouncedSaveSceneDescriptions]);
 
   // 处理视频提示词变化
-  const handleVideoPromptChange = async (index: number, value: string) => {
+  const handleVideoPromptChange = useCallback((index: number, value: string) => {
     const newVideoPrompts = [...videoPrompts];
     newVideoPrompts[index] = value;
     setVideoPrompts(newVideoPrompts);
     
-    // 保存视频提示词
-    try {
-      await APIService.saveVideoPrompt(index, value);
-    } catch (error) {
-      console.error('Error saving video prompt:', error);
-    }
-  };
+    // 使用防抖保存视频提示词
+    debouncedSaveVideoPrompt(index, value);
+  }, [videoPrompts, debouncedSaveVideoPrompt]);
 
   // 处理场景主体变化
   const handleSceneSubjectChange = (index: number, field: string, value: string) => {
@@ -807,6 +911,7 @@ export default function AIImageGenerator() {
     field: string,
     value: string
   ) => {
+    // 修复：应该使用subjectIndex来更新场景主体，而不是sceneIndex
     updateSceneSubject(subjectIndex, field, value).catch((error) => {
       console.error('Error updating scene subject from card:', error);
       showToast('场景主体更新失败');
@@ -900,7 +1005,15 @@ export default function AIImageGenerator() {
         setImages(newImages);
         
         // 保存图片
-        await APIService.saveImage(index, imageUrl, sceneDescriptions[index] || '');
+        // 保存图片到对应的scene_X.json文件
+      await APIService.updateScene(index, {
+        images: [imageUrl],
+        generation_info: {
+          type: '单张生成',
+          timestamp: Date.now(),
+          prompt: sceneDescriptions[index] || ''
+        }
+      });
         
         // 自动保存到当前项目
         if (currentProject) {
@@ -1134,8 +1247,65 @@ export default function AIImageGenerator() {
 
   // 上传图片
   const handleUploadImage = (index: number) => {
-    console.log('Upload image:', index);
-    showToast('上传图片功能待实现');
+    console.log('Upload image for storyboard:', index);
+    
+    // 创建文件输入元素
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.multiple = false;
+    
+    input.onchange = async (event: any) => {
+      const file = event.target.files[0];
+      if (!file) return;
+      
+      try {
+        // 显示上传中状态
+        showToast('正在上传图片...');
+        
+        // 上传图片到后端
+        const formData = new FormData();
+        formData.append('image', file);
+        formData.append('projectName', (window as any).currentProjectName || '');
+        
+        const response = await fetch('http://localhost:1198/api/save/image', {
+          method: 'POST',
+          body: formData
+        });
+        
+        if (!response.ok) {
+          throw new Error('上传失败');
+        }
+        
+        const result = await response.json();
+        const imageUrl = result.image_url;
+        
+        // 保存图片信息到项目
+        // 保存上传图片到对应的scene_X.json文件
+        await APIService.updateScene(index, {
+          images: [imageUrl],
+          generation_info: {
+            type: '上传图片',
+            timestamp: Date.now(),
+            is_upload: true
+          }
+        });
+        
+        // 更新本地状态
+        const newImages = [...images];
+        newImages[index] = safeImageUrl(imageUrl);
+        setImages(newImages);
+        
+        showToast('图片上传成功！');
+        
+      } catch (error) {
+        console.error('Error uploading image:', error);
+        showToast('图片上传失败，请重试');
+      }
+    };
+    
+    // 触发文件选择
+    input.click();
   };
 
   // 上传视频
@@ -1165,7 +1335,7 @@ export default function AIImageGenerator() {
 
 
   // 处理角色信息变化
-  const handleCharacterChange = async (index: number, field: string, value: string) => {
+  const handleCharacterChange = useCallback((index: number, field: string, value: string) => {
     const newCharacters = [...characters];
     newCharacters[index] = {
       ...newCharacters[index],
@@ -1175,22 +1345,9 @@ export default function AIImageGenerator() {
     // 更新状态
     setCharacters(newCharacters);
     
-    // 保存角色信息
-    try {
-      await APIService.saveCharacterInfo({
-        summary: '',
-        characters: newCharacters
-      });
-      
-      // 自动保存到当前项目
-      if (currentProject) {
-        const character = newCharacters[index];
-        await saveCharacterToProject(character);
-      }
-    } catch (error) {
-      console.error('Error saving character info:', error);
-    }
-  };
+    // 使用防抖保存
+    debouncedSaveCharacterInfo(newCharacters);
+  }, [characters, debouncedSaveCharacterInfo]);
 
   // 生成角色英文提示词
   const handleGenerateCharacterPrompt = async (characterIndex: number) => {
@@ -1566,12 +1723,8 @@ Please create a detailed English prompt suitable for AI image generation, includ
 
       setCharacterSubjects(updatedCharacterSubjects);
       
-      // 保存更新
-      await APIService.saveSubjects({
-        characterSubjects: updatedCharacterSubjects,
-        sceneSubjects,
-        
-      });
+      // 使用防抖保存更新
+      debouncedSaveSubjects(updatedCharacterSubjects, undefined);
 
       showToast(`成功添加${imageUrls.length}张图片到"${character.name}"的主体图`);
     } catch (error) {
@@ -1618,12 +1771,8 @@ Please create a detailed English prompt suitable for AI image generation, includ
 
       setCharacterSubjects(updatedCharacterSubjects);
       
-      // 保存更新
-      await APIService.saveSubjects({
-        characterSubjects: updatedCharacterSubjects,
-        sceneSubjects,
-        
-      });
+      // 使用防抖保存更新
+      debouncedSaveSubjects(updatedCharacterSubjects, undefined);
 
       showToast(`成功添加${imageUrls.length}张图片到"${character.name}"的参考图`);
     } catch (error) {
@@ -1819,7 +1968,15 @@ Please create a detailed English prompt suitable for AI image generation, includ
         }));
         
         // 保存第一张图片作为默认场景图片
-        await APIService.saveImage(sceneIndex, imageUrls[0], scenePrompt);
+        // 保存图片到对应的scene_X.json文件
+        await APIService.updateScene(sceneIndex, {
+          images: [imageUrls[0]],
+          generation_info: {
+            type: '场景元素生成',
+            timestamp: Date.now(),
+            prompt: scenePrompt
+          }
+        });
         
         const loraInfo = sceneSubject.selectedLora ? ` (使用LoRA: ${sceneSubject.selectedLora.split('\\').pop()})` : '';
         const sizeInfo = ` (${width}x${height})`;
@@ -1854,12 +2011,8 @@ Please create a detailed English prompt suitable for AI image generation, includ
       updatedSceneSubjects[sceneIndex] = updatedSceneSubject;
       setSceneSubjects(updatedSceneSubjects);
       
-      // 保存到后端
-      await APIService.saveSubjects({
-        characterSubjects,
-        sceneSubjects: updatedSceneSubjects,
-        
-      });
+      // 使用防抖保存到后端
+      debouncedSaveSubjects(undefined, updatedSceneSubjects);
       
       // 同时保存单个场景主体图片（生成的图片，不需要下载）
       await APIService.saveSubjectImage(sceneSubject.name, selectedImageUrl, 'scene', false);
@@ -2452,11 +2605,7 @@ Please create a detailed English prompt suitable for AI image generation, includ
                             });
                             
                             setCharacterSubjects(updatedCharacterSubjects);
-                            await APIService.saveSubjects({
-                              characterSubjects: updatedCharacterSubjects,
-                              sceneSubjects,
-                              
-                            });
+                            debouncedSaveSubjects(updatedCharacterSubjects, undefined);
                             
                             showToast(`成功添加${selectedImageUrls.length}张图片到"${character.name}"的主体图`);
                           } catch (error) {
@@ -2487,11 +2636,7 @@ Please create a detailed English prompt suitable for AI image generation, includ
                             });
                             
                             setCharacterSubjects(updatedCharacterSubjects);
-                            await APIService.saveSubjects({
-                              characterSubjects: updatedCharacterSubjects,
-                              sceneSubjects,
-                              
-                            });
+                            debouncedSaveSubjects(updatedCharacterSubjects, undefined);
                             
                             showToast(`成功添加${selectedImageUrls.length}张图片到"${character.name}"的参考图`);
                           } catch (error) {

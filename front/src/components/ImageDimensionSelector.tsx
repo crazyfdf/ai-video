@@ -118,7 +118,7 @@ const ImageDimensionSelector: React.FC<ImageDimensionSelectorProps> = ({
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={handleCancel}>
           <div className="bg-white rounded-lg max-w-4xl w-full mx-4 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-center p-4 border-b">
-              <h3 className="text-lg font-medium text-gray-900">项目默认尺寸画质设置</h3>
+              <h3 className="text-lg font-medium text-gray-900">生成尺寸设置</h3>
               <button className="text-gray-400 hover:text-gray-600" onClick={handleCancel}>×</button>
             </div>
             <div className="p-4 space-y-4">
@@ -148,12 +148,21 @@ const ImageDimensionSelector: React.FC<ImageDimensionSelectorProps> = ({
                   {qualities.map((qual) => (
                     <button
                       key={qual.value}
-                      onClick={() => onQualityChange(qual.value)}
-                      className={`p-3 rounded-lg border text-center transition-all ${
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        console.log('Quality button clicked:', qual.value);
+                        onQualityChange(qual.value);
+                      }}
+                      className={`p-3 rounded-lg border text-center transition-all cursor-pointer ${
                         quality === qual.value
                           ? 'border-blue-500 bg-blue-50 text-blue-700'
-                          : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300'
+                          : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50'
                       }`}
+                      style={{
+                        pointerEvents: 'auto',
+                        userSelect: 'none'
+                      }}
                     >
                       <div className="font-medium">{qual.label}</div>
                       <div className="text-xs text-gray-500 mt-1">{qual.resolution}</div>

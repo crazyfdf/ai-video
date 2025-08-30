@@ -7,10 +7,59 @@ from datetime import datetime
 from flask import jsonify, request
 from backend.util.constant import get_project_dir
 
-# 创建scene_descriptions目录路径（保持向后兼容）
+
+def _cleanup_and_reorganize_storyboard_files(project_name: str, storyboards: list):
+    """清理并重新组织分镜文件，处理位置变化和删除情况"""
+    try:
+        storyboard_dir = get_project_dir(project_name, 'storyboard')
+        os.makedirs(storyboard_dir, exist_ok=True)
+        
+        # 删除所有现有的分镜文件
+        for filename in os.listdir(storyboard_dir):
+            if filename.startswith('storyboard_') and filename.endswith('.json'):
+                file_path = os.path.join(storyboard_dir, filename)
+                os.remove(file_path)
+                logging.info(f"Removed old storyboard file: {filename}")
+        
+        # 重新保存分镜文件，按新的索引顺序
+        for index, storyboard in enumerate(storyboards):
+            storyboard_file = os.path.join(storyboard_dir, f'storyboard_{index + 1}.json')
+            
+            # 确保分镜数据包含必要的字段
+            storyboard_data = {
+                'scene_id': index + 1,
+                'novel_fragment': storyboard.get('novel_fragment', ''),
+                'storyboard': storyboard.get('storyboard', ''),
+                'wan22_prompt': storyboard.get('wan22_prompt', ''),
+                'character_dialogue': storyboard.get('character_dialogue', ''),
+                'sound_effects': storyboard.get('sound_effects', ''),
+                'elements_layout': storyboard.get('elements_layout', []),
+                'required_elements': storyboard.get('required_elements', {}),
+                'generated_at': storyboard.get('generated_at', datetime.now().isoformat()),
+                'description': storyboard.get('description', ''),
+                'images': storyboard.get('images', []),
+                'generation_info': storyboard.get('generation_info', {})
+            }
+            
+            with open(storyboard_file, 'w', encoding='utf-8') as f:
+                json.dump(storyboard_data, f, ensure_ascii=False, indent=2)
+            
+            logging.info(f"Saved storyboard file: storyboard_{index + 1}.json")
+        
+        logging.info(f"Successfully reorganized {len(storyboards)} storyboard files for project {project_name}")
+        
+    except Exception as e:
+        logging.error(f"Error in _cleanup_and_reorganize_storyboard_files: {e}")
+        raise e
+        
+    except Exception as e:
+        logging.error(f"Error cleaning up and reorganizing storyboard files: {e}")
+        raise e
+
+# 创建storyboard目录路径（保持向后兼容）
 def get_scene_descriptions_dir(project_name):
-    """获取场景描述目录"""
-    return get_project_dir(project_name, 'scene_descriptions')
+    """获取项目的storyboard目录路径"""
+    return get_project_dir(project_name, 'storyboard')
 
 # 清理旧版按项保存的txt文件，仅保留JSON文件
 # 会删除如 0.txt、1.txt、storyboard_0.txt、wan22_0.txt 等遗留文件
@@ -38,10 +87,12 @@ def clean_legacy_txt_files(scene_dir: str):
         logging.warning(f"Error during cleaning legacy txt files in {scene_dir}: {e}")
 
 def save_scene_descriptions():
-    """保存所有画面描述到temp/{project_name}/scene_descriptions文件夹"""
+    """保存所有画面描述到temp/{project_name}/storyboard文件夹"""
     try:
         data = request.json
+        logging.info(f"Received scene descriptions save request: {data}")
         if not data:
+            logging.error("No data provided in request")
             return jsonify({'error': 'No data provided'}), 400
         
         # 支持新的数据格式（包含projectName）和旧格式（直接是数组）
@@ -49,24 +100,26 @@ def save_scene_descriptions():
             descriptions = data
             return jsonify({'error': 'Project name is required'}), 400
         else:
-            descriptions = data.get('descriptions', [])
+            # 支持descriptions字段（旧格式）和storyboards字段（新格式）
+            descriptions = data.get('descriptions', data.get('storyboards', []))
             project_name = data.get('projectName')
+            logging.info(f"Extracted project_name: {project_name}, descriptions count: {len(descriptions)}")
             if not project_name:
+                logging.error("Project name is required in request data")
                 return jsonify({'error': 'Project name is required'}), 400
         
         if not descriptions or not isinstance(descriptions, list):
+            logging.error(f"Invalid descriptions data: {descriptions}")
             return jsonify({'error': 'Invalid descriptions data provided'}), 400
         
-        # 创建项目专用的scene_descriptions目录
-        project_scene_dir = get_project_dir(project_name, 'scene_descriptions')
+        # 创建项目专用的storyboard目录
+        project_scene_dir = get_project_dir(project_name, 'storyboard')
         os.makedirs(project_scene_dir, exist_ok=True)
         # 清理遗留txt文件
         clean_legacy_txt_files(project_scene_dir)
         
-        # 只保存完整的描述列表到JSON文件
-        all_descriptions_path = os.path.join(project_scene_dir, 'all_descriptions.json')
-        with open(all_descriptions_path, 'w', encoding='utf-8') as f:
-            json.dump(descriptions, f, ensure_ascii=False, indent=2)
+        # 使用清理和重新组织函数来处理分镜文件
+        _cleanup_and_reorganize_storyboard_files(project_name, descriptions)
         
         logging.info(f"Scene descriptions saved successfully to project {project_name}: {len(descriptions)} descriptions")
         return jsonify({'message': f'Scene descriptions saved successfully to project {project_name}: {len(descriptions)} descriptions'}), 200
@@ -76,22 +129,33 @@ def save_scene_descriptions():
         return jsonify({'error': str(e)}), 500
 
 def load_scene_descriptions():
-    """从temp/{project_name}/scene_descriptions文件夹加载画面描述"""
+    """从temp/{project_name}/storyboard文件夹加载画面描述"""
     try:
         project_name = request.args.get('project_name')
         if not project_name:
             return jsonify({'error': 'Project name is required'}), 400
-        scene_descriptions_dir = get_scene_descriptions_dir(project_name)
+        scene_descriptions_dir = get_project_dir(project_name, 'storyboard')
         # 清理遗留txt文件
         clean_legacy_txt_files(scene_descriptions_dir)
         
-        all_descriptions_path = os.path.join(scene_descriptions_dir, 'all_descriptions.json')
+        descriptions = []
         
-        if not os.path.exists(all_descriptions_path):
-            return jsonify([]), 200
+        if not os.path.exists(scene_descriptions_dir):
+            return jsonify(descriptions), 200
         
-        with open(all_descriptions_path, 'r', encoding='utf-8') as f:
-            descriptions = json.load(f)
+        # 从单独的分镜文件中加载数据
+        storyboard_files = [f for f in os.listdir(scene_descriptions_dir) if f.startswith('storyboard_') and f.endswith('.json')]
+        storyboard_files.sort(key=lambda x: int(x.split('_')[1].split('.')[0]))  # 按数字排序
+        
+        for filename in storyboard_files:
+            file_path = os.path.join(scene_descriptions_dir, filename)
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    description = json.load(f)
+                    descriptions.append(description)
+            except Exception as e:
+                logging.warning(f"Error loading storyboard file {filename}: {e}")
+                continue
         
         logging.info(f"Scene descriptions loaded successfully: {len(descriptions)} descriptions")
         return jsonify(descriptions), 200
@@ -113,31 +177,40 @@ def save_single_scene_description():
         if not project_name:
             return jsonify({'error': 'Project name is required'}), 400
         
-        # 获取项目专用的scene_descriptions目录
+        # 获取项目专用的storyboard目录
         scene_descriptions_dir = get_scene_descriptions_dir(project_name)
         
-        # 确保scene_descriptions目录存在
+        # 确保storyboard目录存在
         os.makedirs(scene_descriptions_dir, exist_ok=True)
         # 清理遗留txt文件
         clean_legacy_txt_files(scene_descriptions_dir)
         
-        # 只更新完整的描述列表JSON文件
-        all_descriptions_path = os.path.join(scene_descriptions_dir, 'all_descriptions.json')
-        descriptions = []
+        # 保存到单独的分镜文件
+        storyboard_file = os.path.join(scene_descriptions_dir, f'storyboard_{index + 1}.json')
         
-        if os.path.exists(all_descriptions_path):
-            with open(all_descriptions_path, 'r', encoding='utf-8') as f:
-                descriptions = json.load(f)
+        # 如果是字符串描述，转换为完整的分镜对象
+        if isinstance(description, str):
+            storyboard_data = {
+                'scene_id': index + 1,
+                'novel_fragment': '',
+                'storyboard': description,
+                'wan22_prompt': '',
+                'character_dialogue': '',
+                'sound_effects': '',
+                'elements_layout': [],
+                'required_elements': {},
+                'generated_at': datetime.now().isoformat(),
+                'description': description,
+                'images': [],
+                'generation_info': {}
+            }
+        else:
+            storyboard_data = description
+            storyboard_data['scene_id'] = index + 1
         
-        # 确保列表足够长
-        while len(descriptions) <= index:
-            descriptions.append('')
-        
-        descriptions[index] = description
-        
-        # 保存更新后的描述列表
-        with open(all_descriptions_path, 'w', encoding='utf-8') as f:
-            json.dump(descriptions, f, ensure_ascii=False, indent=2)
+        # 保存分镜文件
+        with open(storyboard_file, 'w', encoding='utf-8') as f:
+            json.dump(storyboard_data, f, ensure_ascii=False, indent=2)
         
         return jsonify({'success': True}), 200
     except Exception as e:
@@ -230,32 +303,52 @@ def load_storyboard_elements():
                             break
                     scene_subjects.add((scene_name, scene_prompt))
         
-        # 加载角色图片信息
+        # 加载角色图片信息 - 从分镜文件中查找
         def load_character_image_info(character_name):
-            character_dir = get_project_dir(project_name, 'character')
-            if os.path.exists(character_dir):
-                for filename in os.listdir(character_dir):
-                    if filename.startswith(character_name) and filename.endswith('_info.json'):
-                        info_path = os.path.join(character_dir, filename)
+            storyboard_dir = get_project_dir(project_name, 'storyboard')
+            if os.path.exists(storyboard_dir):
+                for filename in os.listdir(storyboard_dir):
+                    if filename.startswith('storyboard_') and filename.endswith('.json'):
+                        storyboard_path = os.path.join(storyboard_dir, filename)
                         try:
-                            with open(info_path, 'r', encoding='utf-8') as f:
-                                info = json.load(f)
-                            return info.get('image_url', '')
+                            with open(storyboard_path, 'r', encoding='utf-8') as f:
+                                storyboard_data = json.load(f)
+                            # 检查elements_layout中是否有该角色的图片
+                            elements_layout = storyboard_data.get('elements_layout', [])
+                            for element in elements_layout:
+                                if (element.get('element_type') == 'character' and 
+                                    element.get('name') == character_name and 
+                                    element.get('photo')):
+                                    return element.get('photo')
+                            # 检查images字段中是否有图片
+                            images = storyboard_data.get('images', [])
+                            if images:
+                                return images[0] if isinstance(images[0], str) else images[0].get('image_url', '') if isinstance(images[0], dict) else ''
                         except Exception:
                             continue
             return ''
         
-        # 加载场景图片信息
+        # 加载场景图片信息 - 从分镜文件中查找
         def load_scene_image_info(scene_name):
-            scene_descriptions_dir = get_project_dir(project_name, 'scene_descriptions')
-            if os.path.exists(scene_descriptions_dir):
-                for filename in os.listdir(scene_descriptions_dir):
-                    if scene_name.lower() in filename.lower() and filename.endswith('_info.json'):
-                        info_path = os.path.join(scene_descriptions_dir, filename)
+            storyboard_dir = get_project_dir(project_name, 'storyboard')
+            if os.path.exists(storyboard_dir):
+                for filename in os.listdir(storyboard_dir):
+                    if filename.startswith('storyboard_') and filename.endswith('.json'):
+                        storyboard_path = os.path.join(storyboard_dir, filename)
                         try:
-                            with open(info_path, 'r', encoding='utf-8') as f:
-                                info = json.load(f)
-                            return info.get('image_url', '')
+                            with open(storyboard_path, 'r', encoding='utf-8') as f:
+                                storyboard_data = json.load(f)
+                            # 检查elements_layout中是否有该场景的图片
+                            elements_layout = storyboard_data.get('elements_layout', [])
+                            for element in elements_layout:
+                                if (element.get('element_type') == 'scene' and 
+                                    element.get('name') == scene_name and 
+                                    element.get('photo')):
+                                    return element.get('photo')
+                            # 检查images字段中是否有图片
+                            images = storyboard_data.get('images', [])
+                            if images:
+                                return images[0] if isinstance(images[0], str) else images[0].get('image_url', '') if isinstance(images[0], dict) else ''
                         except Exception:
                             continue
             return ''
@@ -264,35 +357,40 @@ def load_storyboard_elements():
         def load_subject_image_info(subject_name, subject_type):
             if subject_type == 'character':
                 target_dir = get_project_dir(project_name, 'character')
-                # 从character_X.json文件中查找
+                # 从按名称命名的角色文件中查找
                 if os.path.exists(target_dir):
                     for filename in os.listdir(target_dir):
-                        if filename.startswith('character_') and filename.endswith('.json'):
+                        if filename.endswith('.json'):
                             char_path = os.path.join(target_dir, filename)
                             try:
                                 with open(char_path, 'r', encoding='utf-8') as f:
                                     char_data = json.load(f)
                                 if char_data.get('name') == subject_name:
+                                    images = char_data.get('images', [])
+                                    if images and isinstance(images[0], dict):
+                                        return images[0].get('image_url', images[0].get('local_url', ''))
+                                    elif images and isinstance(images[0], str):
+                                        return images[0]
                                     return char_data.get('image_url', '')
                             except Exception:
                                 continue
             else:
-                target_dir = get_project_dir(project_name, 'scene_descriptions')
-                # 从scene_X.json文件中查找
+                target_dir = get_project_dir(project_name, 'scene')
+                # 从按名称命名的场景文件中查找
                 if os.path.exists(target_dir):
                     for filename in os.listdir(target_dir):
-                        if filename.startswith('scene_') and filename.endswith('.json'):
+                        if filename.endswith('.json'):
                             scene_path = os.path.join(target_dir, filename)
                             try:
                                 with open(scene_path, 'r', encoding='utf-8') as f:
                                     scene_data = json.load(f)
-                                # 检查场景名称或ID是否匹配
-                                scene_id = scene_data.get('scene_id', filename.replace('scene_', '').replace('.json', ''))
-                                if str(scene_id) == str(subject_name) or f'场景{scene_id}' == subject_name:
+                                if scene_data.get('name') == subject_name:
                                     # 返回第一张图片的URL（如果有的话）
                                     images = scene_data.get('images', [])
                                     if images and isinstance(images[0], dict):
                                         return images[0].get('image_url', images[0].get('local_url', ''))
+                                    elif images and isinstance(images[0], str):
+                                        return images[0]
                             except Exception:
                                 continue
             return ''
@@ -729,45 +827,210 @@ def save_character_image():
 # 新增：加载场景图片信息
 
 def load_scene_images():
-    """加载场景图片信息"""
+    """从各个scene_X.json文件加载场景图片信息"""
     try:
         project_name = request.args.get('projectName')
         if not project_name:
             return jsonify({'error': 'projectName is required'}), 400
-        images_dir = get_project_dir(project_name, 'images/scenes')
-
-        if not os.path.exists(images_dir):
-            return jsonify({'scene_images': []}), 200
-
+        
         scene_images = []
+        
+        # 首先从scene目录加载（主要数据源）
+        scene_dir = get_project_dir(project_name, 'scene')
+        if os.path.exists(scene_dir):
+            for filename in os.listdir(scene_dir):
+                if filename.endswith('.json'):
+                    scene_file_path = os.path.join(scene_dir, filename)
+                    try:
+                        with open(scene_file_path, 'r', encoding='utf-8') as f:
+                            scene_data = json.load(f)
+                        
+                        # 尝试从文件名或数据中获取scene索引
+                        scene_index = 0
+                        if filename.startswith('scene_'):
+                            # 旧格式：scene_X.json
+                            scene_index = int(filename.replace('scene_', '').replace('.json', ''))
+                        elif '场景' in filename:
+                            # 新格式：场景X.json
+                            try:
+                                scene_index = int(filename.replace('场景', '').replace('.json', ''))
+                            except ValueError:
+                                # 如果无法从文件名提取索引，使用数据中的id或默认值
+                                scene_index = scene_data.get('id', 0) % 1000  # 取id的后三位作为索引
+                        else:
+                            # 新的场景主体命名格式：场景名称.json（如"古宅.json"）
+                            # 优先使用scene_data中的index字段
+                            if 'index' in scene_data:
+                                scene_index = scene_data['index']
+                            elif 'scene_index' in scene_data:
+                                scene_index = scene_data['scene_index']
+                            elif 'id' in scene_data:
+                                scene_index = scene_data['id']
+                            else:
+                                # 如果没有明确的索引，使用文件名的hash值模1000作为索引
+                                # 这样可以确保相同文件名总是得到相同的索引
+                                import hashlib
+                                scene_index = int(hashlib.md5(filename.encode()).hexdigest(), 16) % 1000
+                        
+                        # 如果scene文件中有images字段，则添加到结果中
+                        if 'images' in scene_data and scene_data['images']:
+                            for image_info in scene_data['images']:
+                                if isinstance(image_info, dict):
+                                    scene_image_info = {
+                                        'scene_index': scene_index,
+                                        'image_url': image_info.get('image_url', image_info.get('local_url', '')),
+                                        'generation_info': image_info.get('generation_info', {}),
+                                        'saved_at': image_info.get('saved_at', ''),
+                                        'is_upload': image_info.get('is_upload', False)
+                                    }
+                                elif isinstance(image_info, str):
+                                    scene_image_info = {
+                                        'scene_index': scene_index,
+                                        'image_url': image_info,
+                                        'generation_info': scene_data.get('generation_info', {})
+                                    }
+                                scene_images.append(scene_image_info)
+                        
+                        # 如果有主图片（image_url字段），也添加到结果中
+                        if scene_data.get('image_url'):
+                            scene_image_info = {
+                                'scene_index': scene_index,
+                                'image_url': scene_data['image_url'],
+                                'generation_info': scene_data.get('generation_info', {}),
+                                'is_main_image': True
+                            }
+                            scene_images.append(scene_image_info)
+                            
+                    except Exception as ie:
+                        logging.warning(f'Error reading scene file {filename}: {ie}')
+                        continue
+        
+        # 仅从 scene 目录加载场景图片信息，不再回退到已废弃的 scene_descriptions 目录
 
-        # 扫描场景图片目录中的信息文件
-        for filename in os.listdir(images_dir):
-            if filename.endswith('_info.json'):
-                info_path = os.path.join(images_dir, filename)
-                try:
-                    with open(info_path, 'r', encoding='utf-8') as f:
-                        image_info = json.load(f)
-
-                    # 如果存在图片文件名，则构造可访问的URL
-                    if 'filename' in image_info:
-                        image_path = os.path.join(images_dir, image_info['filename'])
-                        if os.path.exists(image_path):
-                            image_info['image_url'] = f'/temp/{project_name}/images/scenes/{image_info["filename"]}'
-
-                    scene_images.append(image_info)
-                except Exception as ie:
-                    logging.warning(f'Error reading scene image info {filename}: {ie}')
-                    continue
-
+        # 获取fragments数量，确保为所有fragments提供场景图片占位符
+        fragments_dir = get_project_dir(project_name, 'fragments')
+        max_fragment_index = -1
+        if os.path.exists(fragments_dir):
+            for filename in os.listdir(fragments_dir):
+                if filename.endswith('.txt') and filename.replace('.txt', '').isdigit():
+                    fragment_index = int(filename.replace('.txt', ''))
+                    max_fragment_index = max(max_fragment_index, fragment_index)
+        
+        # 创建一个包含所有fragment索引的完整场景图片列表
+        complete_scene_images = []
+        scene_image_map = {img['scene_index']: img for img in scene_images}
+        
+        # 为每个fragment创建场景图片条目
+        for i in range(max_fragment_index + 1):
+            if i in scene_image_map:
+                # 使用实际的场景图片数据
+                complete_scene_images.append(scene_image_map[i])
+            else:
+                # 创建占位符条目
+                complete_scene_images.append({
+                    'scene_index': i,
+                    'image_url': '',
+                    'generation_info': {},
+                    'saved_at': '',
+                    'is_upload': False,
+                    'is_placeholder': True
+                })
+        
         # 按scene_index排序
-        scene_images.sort(key=lambda x: x.get('scene_index', 0))
+        complete_scene_images.sort(key=lambda x: x.get('scene_index', 0))
 
-        logging.info(f"Scene images loaded successfully: {len(scene_images)} images")
-        return jsonify({'scene_images': scene_images}), 200
+        logging.info(f"Scene images loaded successfully: {len(complete_scene_images)} total entries ({len(scene_images)} with actual images, {len(complete_scene_images) - len(scene_images)} placeholders)")
+        return jsonify({'scene_images': complete_scene_images}), 200
 
     except Exception as e:
         logging.error(f'Error loading scene images: {e}')
+        return jsonify({'error': str(e)}), 500
+
+
+def update_scene_file():
+    """更新单个scene文件，添加生成的图片URL"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'error': 'No data provided'}), 400
+        
+        project_name = data.get('projectName')
+        scene_index = data.get('sceneIndex')
+        image_url = data.get('imageUrl')
+        generation_info = data.get('generationInfo', {})
+        
+        if not project_name or scene_index is None or not image_url:
+            return jsonify({'error': 'projectName, sceneIndex and imageUrl are required'}), 400
+        
+        # 优先更新scene目录中的文件
+        scene_dir = get_project_dir(project_name, 'scene')
+        if not os.path.exists(scene_dir):
+            os.makedirs(scene_dir, exist_ok=True)
+        
+        scene_file_path = os.path.join(scene_dir, f'scene_{scene_index}.json')
+        
+        # 读取现有的scene文件或创建新的
+        scene_data = {}
+        if os.path.exists(scene_file_path):
+            try:
+                with open(scene_file_path, 'r', encoding='utf-8') as f:
+                    scene_data = json.load(f)
+            except Exception as e:
+                logging.warning(f'Error reading existing scene file {scene_file_path}: {e}')
+                scene_data = {}
+        else:
+            # 如果 scene 目录中没有该文件，则从空结构开始，杜绝从已废弃目录回退
+            scene_data = {}
+        
+        # 确保images字段存在并且是正确的格式
+        if 'images' not in scene_data:
+            scene_data['images'] = []
+        
+        # 构建图片信息对象
+        image_info = {
+            'image_url': image_url,
+            'saved_at': datetime.now().isoformat(),
+            'is_upload': False
+        }
+        if generation_info:
+            image_info['generation_info'] = generation_info
+        
+        # 检查是否已存在相同的图片URL
+        existing_image = None
+        for img in scene_data['images']:
+            if isinstance(img, dict) and img.get('image_url') == image_url:
+                existing_image = img
+                break
+            elif isinstance(img, str) and img == image_url:
+                existing_image = img
+                break
+        
+        if not existing_image:
+            scene_data['images'].append(image_info)
+        
+        # 设置主图片URL（向后兼容）
+        scene_data['image_url'] = image_url
+        
+        # 更新生成信息
+        if generation_info:
+            scene_data['generation_info'] = generation_info
+        
+        # 更新时间戳
+        scene_data['updated_at'] = datetime.now().isoformat()
+        
+        # 保存更新后的scene文件到scene目录
+        with open(scene_file_path, 'w', encoding='utf-8') as f:
+            json.dump(scene_data, f, ensure_ascii=False, indent=2)
+        
+        logging.info(f"Scene file updated successfully: {scene_file_path}")
+        return jsonify({
+            'success': True,
+            'message': f'Scene {scene_index} updated successfully',
+            'scene_data': scene_data
+        }), 200
+        
+    except Exception as e:
+        logging.error(f'Error updating scene file: {e}')
         return jsonify({'error': str(e)}), 500
 
 
@@ -775,21 +1038,33 @@ def save_storyboards():
     """保存分镜脚本，现在通过latest_llm_response_storyboard_generation.json处理"""
     try:
         request_data = request.json
+        logging.info(f"Received storyboard save request: {request_data}")
         if not request_data:
+            logging.error("No data provided in request")
             return jsonify({'error': 'No data provided'}), 400
         
         # 支持新的数据格式（包含projectName）和旧格式（直接是数组）
         if isinstance(request_data, list):
             storyboards = request_data
-            return jsonify({'error': 'Project name is required'}), 400
+            project_name = request.args.get('projectName')
+            logging.info(f"List format detected, project_name from args: {project_name}")
+            if not project_name:
+                logging.error("Project name is required for list format")
+                return jsonify({'error': 'Project name is required'}), 400
         else:
             storyboards = request_data.get('storyboards', [])
             project_name = request_data.get('projectName')
+            logging.info(f"Object format detected, project_name: {project_name}, storyboards count: {len(storyboards)}")
             if not project_name:
+                logging.error("Project name is required in request data")
                 return jsonify({'error': 'Project name is required'}), 400
-        
+
         if not storyboards:
+            logging.error("No storyboards data provided")
             return jsonify({'error': 'No storyboards data provided'}), 400
+        
+        # 清理并重新组织分镜文件
+        _cleanup_and_reorganize_storyboard_files(project_name, storyboards)
         
         # 构建完整的分镜数据结构
         storyboard_data = {
@@ -808,6 +1083,8 @@ def save_storyboards():
         if not success:
             logging.error(f"Failed to save storyboard data for project: {project_name}")
             return jsonify({'error': 'Failed to save storyboard data'}), 500
+        
+        scenes_count = len(data.get('scenes', []))
         
         logging.info(f"Storyboards saved successfully to latest_llm_response_storyboard_generation.json for project {project_name}: {len(storyboards)} items")
         return jsonify({'message': f'Storyboards saved successfully to project {project_name}'}), 200
@@ -986,46 +1263,26 @@ def load_file_data():
             return jsonify({'error': 'projectName is required'}), 400
         file_type = request.args.get('file_type', 'storyboard')  # storyboard 或 complete
         
-        project_scene_dir = get_project_dir(project_name, 'scene_descriptions')
-        
         # 根据文件类型选择对应的处理方式
         if file_type == 'storyboard':
-            file_path = os.path.join(project_scene_dir, 'latest_llm_response_storyboard_generation.json')
-            
-            if not os.path.exists(file_path):
-                logging.warning(f"File not found: {file_path}")
-                return jsonify({'error': f'File not found: {os.path.basename(file_path)}'}), 404
-            
-            with open(file_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            
-            logging.info(f"File data loaded successfully from {os.path.basename(file_path)}")
+            # 与前端保持一致：从 latest_llm_response_storyboard_generation.json 加载
+            parser = LatestStoryboardParser(project_name)
+            data = parser.load_latest_storyboard_json()
+            if data is None:
+                logging.warning("latest_llm_response_storyboard_generation.json not found or invalid")
+                return jsonify({'error': 'File not found: latest_llm_response_storyboard_generation.json'}), 404
             return jsonify(data), 200
-            
         elif file_type == 'complete':
-            # 对于complete类型，调用load_complete_storyboard_data函数重新构建数据
-            # 临时设置request参数
-            original_args = request.args
-            request.args = request.args.copy()
-            
-            # 调用load_complete_storyboard_data函数
-            response = load_complete_storyboard_data()
-            
-            # 恢复原始参数
-            request.args = original_args
-            
-            return response
-            
+            return load_complete_storyboard_data()
         else:
-            return jsonify({'error': 'Invalid file_type parameter'}), 400
-        
+            return jsonify({'error': f'Unsupported file_type: {file_type}'}), 400
     except Exception as e:
         logging.error(f'Error loading file data: {e}')
         return jsonify({'error': str(e)}), 500
 
 
 def load_character_images():
-    """从character_X.json文件中加载角色图片信息"""
+    """从角色主体文件中加载角色图片信息"""
     try:
         project_name = request.args.get('projectName')
         if not project_name:
@@ -1036,50 +1293,48 @@ def load_character_images():
             return jsonify({'character_images': []}), 200
         
         character_images = []
+        character_index = 0
         
-        # 扫描所有character_X.json文件
-        i = 0
-        while True:
-            char_file_path = os.path.join(character_dir, f'character_{i}.json')
-            if not os.path.exists(char_file_path):
-                break
-            
-            try:
-                with open(char_file_path, 'r', encoding='utf-8') as f:
-                    character_data = json.load(f)
-                
-                # 提取角色的图片信息
-                if 'images' in character_data and isinstance(character_data['images'], list):
-                    for image_info in character_data['images']:
-                        # 添加角色信息到图片数据中
-                        enhanced_image_info = {
-                            **image_info,
-                            'character_name': character_data.get('name', f'character_{i}'),
-                            'character_index': i
+        # 扫描character目录下的所有.json文件
+        for filename in os.listdir(character_dir):
+            if filename.endswith('.json'):
+                char_file_path = os.path.join(character_dir, filename)
+                try:
+                    with open(char_file_path, 'r', encoding='utf-8') as f:
+                        character_data = json.load(f)
+                    
+                    # 提取角色的图片信息
+                    if 'images' in character_data and isinstance(character_data['images'], list):
+                        for image_info in character_data['images']:
+                            # 添加角色信息到图片数据中
+                            enhanced_image_info = {
+                                **image_info,
+                                'character_name': character_data.get('name', filename.replace('.json', '')),
+                                'character_index': character_index
+                            }
+                            character_images.append(enhanced_image_info)
+                    
+                    # 如果角色有主要图片URL，也添加进去
+                    if 'image_url' in character_data and character_data['image_url']:
+                        main_image_info = {
+                            'image_url': character_data['image_url'],
+                            'character_name': character_data.get('name', filename.replace('.json', '')),
+                            'character_index': character_index,
+                            'type': 'main_image',
+                            'generated_at': character_data.get('created_at', '')
                         }
-                        character_images.append(enhanced_image_info)
-                
-                # 如果角色有主要图片URL，也添加进去
-                if 'image_url' in character_data and character_data['image_url']:
-                    main_image_info = {
-                        'image_url': character_data['image_url'],
-                        'character_name': character_data.get('name', f'character_{i}'),
-                        'character_index': i,
-                        'type': 'main_image',
-                        'generated_at': character_data.get('created_at', '')
-                    }
-                    # 检查是否已存在相同的图片URL，避免重复
-                    existing_urls = [img.get('image_url') for img in character_images]
-                    if character_data['image_url'] not in existing_urls:
-                        character_images.append(main_image_info)
-                
-                i += 1
-                
-            except Exception as e:
-                logging.warning(f"Error loading character_{i}.json: {e}")
-                break
+                        # 检查是否已存在相同的图片URL，避免重复
+                        existing_urls = [img.get('image_url') for img in character_images]
+                        if character_data['image_url'] not in existing_urls:
+                            character_images.append(main_image_info)
+                    
+                    character_index += 1
+                    
+                except Exception as e:
+                    logging.warning(f"Error loading character file {filename}: {e}")
+                    continue
         
-        logging.info(f"Loaded {len(character_images)} character images from {i} character files for project {project_name}")
+        logging.info(f"Loaded {len(character_images)} character images from {character_index} character files for project {project_name}")
         return jsonify({'character_images': character_images}), 200
         
     except Exception as e:

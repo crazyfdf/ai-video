@@ -90,7 +90,25 @@ export const mapElementsToRegionParams = (
     const lora = element.lora ?? subjectInfo?.selectedLora ?? '';
     // 修复photo获取逻辑：优先从subjectImages获取，其次从images字段
     const photo = element.photo ?? subjectInfo?.subjectImages?.[0] ?? subjectInfo?.images?.[0] ?? '';
-    let prompt = element.prompt ?? subjectInfo?.tag ?? subjectInfo?.description ?? '';
+    
+    // 修复提示词生成：tag+prompt用逗号拼接
+    let prompt = '';
+    if (subjectInfo) {
+      // 按照用户要求：tag+prompt用逗号拼接
+      const tag = subjectInfo.tag || '';
+      const elementPrompt = element.prompt || '';
+      if (tag && elementPrompt) {
+        prompt = `${tag}, ${elementPrompt}`;
+      } else if (tag) {
+        prompt = tag;
+      } else if (elementPrompt) {
+        prompt = elementPrompt;
+      } else {
+        prompt = subjectInfo.description || '';
+      }
+    } else if (element.prompt) {
+      prompt = element.prompt;
+    }
     
     // 添加调试信息
     console.log(`Element ${index} (${normalizedName}):`, {
@@ -191,7 +209,15 @@ export async function generateImageWithRegionControl(
   }
 
   if (imageUrl) {
-    await APIService.saveImage(index, imageUrl, '分区控制生成');
+    // 保存图片到对应的scene_X.json文件而不是image_index.json
+    await APIService.updateScene(index, {
+      images: [imageUrl],
+      generation_info: {
+        type: '分区控制生成',
+        timestamp: Date.now(),
+        elements_layout: elementsLayout
+      }
+    });
     const updatedImages = [...ctx.images];
     updatedImages[index] = safeImageUrl(`${imageUrl}?v=${Date.now()}`);
     ctx.setImages(updatedImages);
@@ -292,7 +318,17 @@ export async function generateImageWithLora(
 
   if (result.data && result.data.length > 0) {
     const imageUrl = result.data[0].url;
-    await APIService.saveImage(index, imageUrl, finalPrompt);
+    // 保存图片到对应的scene_X.json文件而不是image_index.json
+    await APIService.updateScene(index, {
+      images: [imageUrl],
+      generation_info: {
+        type: '智能生成',
+        timestamp: Date.now(),
+        prompt: finalPrompt,
+        lora: primaryLora,
+        strategy: loraStrategy
+      }
+    });
     const updatedImages = [...ctx.images];
     updatedImages[index] = safeImageUrl(`${imageUrl}?v=${Date.now()}`);
     ctx.setImages(updatedImages);
@@ -531,7 +567,15 @@ export async function generateAllImages(ctx: {
       const result = await APIService.generateImage(prompt, API_KEY, width, height, '分区控制');
       if (result.data && result.data.length > 0) {
         const imageUrl = result.data[0].url;
-        await APIService.saveImage(i, imageUrl, ctx.sceneDescriptions[i] || '');
+        // 保存图片到对应的scene_X.json文件
+        await APIService.updateScene(i, {
+          images: [imageUrl],
+          generation_info: {
+            type: '批量生成',
+            timestamp: Date.now(),
+            prompt: ctx.sceneDescriptions[i] || ''
+          }
+        });
         updatedImages[i] = safeImageUrl(`${imageUrl}?v=${Date.now()}`);
         successCount++;
         ctx.setImages([...updatedImages]);

@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Character, Subject, StoryboardElement } from '../types';
 import { APIService } from '../services/api';
 import { safeImageUrl, createPlaceholderSVG, sanitizeScenePrompt } from '../utils/helpers';
@@ -50,9 +50,10 @@ export const useStoryboard = (currentProject?: any) => {
         loadSavedImages(),
         loadCharacterImages(),
         loadStoryboardElements(),
-        loadSceneImages(),
         loadVideoData(),
       ]);
+      
+      // 场景图片将通过useEffect在fragments变化时自动加载
       
       setLoaded(true);
     } catch (error) {
@@ -109,7 +110,11 @@ export const useStoryboard = (currentProject?: any) => {
       }
       
       const data = await APIService.loadSceneDescriptions();
-      setSceneDescriptions(data || []);
+      // 从完整的storyboard对象中提取wan22_prompt字段
+      const descriptions = (data || []).map((scene: any) => 
+        sanitizeScenePrompt(scene.wan22_prompt || scene.scene_description || '')
+      );
+      setSceneDescriptions(descriptions);
     } catch (error) {
       console.error('Error loading scene descriptions:', error);
     }
@@ -149,27 +154,23 @@ export const useStoryboard = (currentProject?: any) => {
         const newCharacterDialogues = scenes.map((scene: any) => scene.character_dialogue || '[无台词]');
         const newSoundEffects = scenes.map((scene: any) => scene.sound_effects || '[环境音效待生成]');
         
-        // 只有当当前没有数据时才更新
-        if (fragments.length === 0) {
-          setFragments(newFragments);
-        }
-        if (storyboards.length === 0) {
-          setStoryboards(newStoryboards);
-        }
-        if (sceneDescriptions.length === 0) {
-          setSceneDescriptions(newDescriptions);
-        }
-        if (characterDialogues.length === 0) {
-          setCharacterDialogues(newCharacterDialogues);
-        }
-        if (soundEffects.length === 0) {
-          setSoundEffects(newSoundEffects);
-        }
+        // 始终更新数据，确保页面刷新时能重新加载
+        setFragments(newFragments);
+        setStoryboards(newStoryboards);
+        setSceneDescriptions(newDescriptions);
+        setCharacterDialogues(newCharacterDialogues);
+        setSoundEffects(newSoundEffects);
         
-        // 初始化图片占位符
-        if (images.length === 0) {
-          setImages(newFragments.map(() => createPlaceholderSVG()));
-        }
+        // 提取分镜图片数据
+        const newImages = scenes.map((scene: any) => {
+          if (scene.images && scene.images.length > 0) {
+            return safeImageUrl(scene.images[0]); // 使用第一张图片
+          }
+          return createPlaceholderSVG();
+        });
+        
+        // 更新图片数组
+        setImages(newImages);
         
         console.log(`Loaded complete storyboard data: ${scenes.length} scenes`);
       }
@@ -1056,6 +1057,25 @@ ${novelContent}
         return;
       }
       
+      // 首先尝试从分镜数据中加载图片
+      try {
+        const storyboardData = await APIService.loadCompleteStoryboardData();
+        if (storyboardData && storyboardData.scenes && storyboardData.scenes.length > 0) {
+          const storyboardImages = storyboardData.scenes.map((scene: any) => {
+            if (scene.images && scene.images.length > 0) {
+              return safeImageUrl(scene.images[0]);
+            }
+            return createPlaceholderSVG();
+          });
+          setImages(storyboardImages);
+          console.log('Storyboard images loaded successfully');
+          return;
+        }
+      } catch (storyboardError) {
+        console.log('No storyboard images found, trying saved images');
+      }
+      
+      // 如果没有分镜图片，则从保存的图片中加载
       const imageData = await APIService.loadImages();
       
       // 更新图片数组
@@ -1096,20 +1116,15 @@ ${novelContent}
           }
         });
         
-        // 如果有角色信息，根据角色数量创建图片数组
+        // 如果有角色信息，根据角色数量创建图片数组；否则暂存，待角色加载后再设置
         if (characters.length > 0) {
-          const loadedImages = characters.map((_, index) => {
-            return imageMap[index] || createPlaceholderSVG();
-          });
+          const loadedImages = characters.map((_, index) => imageMap[index] || createPlaceholderSVG());
           setCharacterImages(loadedImages);
           console.log(`Loaded character images for ${characters.length} characters, ${Object.keys(imageMap).length} images found`);
-        } else {
-          // 如果角色信息还没加载，先保存图片映射，等角色加载完成后再设置
-          if (Object.keys(imageMap).length > 0) {
-            // 临时存储图片映射
-            (window as any).tempCharacterImageMap = imageMap;
-            console.log(`Temporarily stored ${Object.keys(imageMap).length} character images`);
-          }
+        } else if (Object.keys(imageMap).length > 0) {
+          // 临时存储图片映射
+          (window as any).tempCharacterImageMap = imageMap;
+          console.log(`Temporarily stored ${Object.keys(imageMap).length} character images`);
         }
       }
     } catch (error) {
@@ -1163,29 +1178,48 @@ ${novelContent}
       const data = await APIService.loadSceneImages();
       
       if (data && data.scene_images && Array.isArray(data.scene_images)) {
-        const loadedImages = data.scene_images.map((imageInfo: any) => {
-          if (imageInfo && imageInfo.image_url) {
-            return safeImageUrl(`${imageInfo.image_url}?v=${Date.now()}`);
+        const imageMap: { [key: number]: string } = {};
+        data.scene_images.forEach((imageInfo: any) => {
+          if (imageInfo && imageInfo.image_url && typeof imageInfo.scene_index === 'number') {
+            if (!imageMap[imageInfo.scene_index]) {
+              imageMap[imageInfo.scene_index] = safeImageUrl(`${imageInfo.image_url}?v=${Date.now()}`);
+            }
           }
-          return "";
         });
-        
-        setSceneImages(loadedImages);
-        console.log(`Loaded ${loadedImages.length} scene images`);
-      } else {
-        // 如果没有保存的场景图片，根据片段数量初始化空数组
+
+        // 删除：嵌套在 loadSceneImages 内部的 useEffect（无效）
+        // 确保在 fragments 加载完成后再次加载场景图片，避免初始化时并发导致的竞态
+        // useEffect(() => {
+        //   if (fragments.length > 0) {
+        //     loadSceneImages();
+        //   }
+        // }, [fragments.length, loadSceneImages]);
+      
         if (fragments.length > 0) {
-          setSceneImages(fragments.map(() => ""));
+          const loadedImages = fragments.map((_, index) => imageMap[index] || "");
+          setSceneImages(loadedImages);
+          console.log(`Loaded scene images for ${fragments.length} fragments, ${Object.keys(imageMap).length} images found`);
+        } else {
+          console.log('No fragments available, cannot map scene images');
         }
+      } else if (fragments.length > 0) {
+        setSceneImages(fragments.map(() => ""));
       }
     } catch (error) {
       console.error('Error loading scene images:', error);
-      // 如果加载失败，根据片段数量初始化空数组
       if (fragments.length > 0) {
         setSceneImages(fragments.map(() => ""));
       }
     }
   }, [fragments.length]);
+
+  // 在 fragments 变化时触发场景图片加载
+  useEffect(() => {
+    if (fragments.length > 0) {
+      console.log('Fragments loaded, triggering scene images load:', fragments.length);
+      loadSceneImages();
+    }
+  }, [fragments.length, loadSceneImages]);
 
   // 加载视频数据
   const loadVideoData = useCallback(async () => {

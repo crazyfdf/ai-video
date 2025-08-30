@@ -39,6 +39,8 @@ export const SubjectCreationModal: React.FC<SubjectCreationModalProps> = ({
   const [isGeneratingImage, setIsGeneratingImage] = useState<boolean>(false);
   const [generatedImages, setGeneratedImages] = useState<string[]>([]);
   const [selectedImage, setSelectedImage] = useState<string>('');
+  const [subjectName, setSubjectName] = useState<string>('');
+  const [subjectDescription, setSubjectDescription] = useState<string>('');
   
   // 使用项目默认配置
   const defaultConfig = getDefaultImageConfig();
@@ -56,35 +58,28 @@ export const SubjectCreationModal: React.FC<SubjectCreationModalProps> = ({
       setIsGeneratingImage(false);
       setAspectRatio(defaultConfig.aspectRatio);
       setQuality(defaultConfig.quality);
+      setSubjectName('');
+      setSubjectDescription('');
     }
   }, [isOpen, defaultConfig.aspectRatio, defaultConfig.quality]);
 
   // 处理预填充数据
   useEffect(() => {
     if (isOpen && prefilledData) {
-      // 等待DOM元素渲染完成后填充数据
-      setTimeout(() => {
-        const nameInput = document.getElementById('subject-name-input') as HTMLInputElement;
-        const descInput = document.getElementById('subject-description-input') as HTMLTextAreaElement;
-        
-        if (nameInput && prefilledData.name) {
-          nameInput.value = prefilledData.name;
-        }
-        if (descInput && prefilledData.description) {
-          descInput.value = prefilledData.description;
-        }
-      }, 100);
+      if (prefilledData.name) {
+        setSubjectName(prefilledData.name);
+      }
+      if (prefilledData.description) {
+        setSubjectDescription(prefilledData.description);
+      }
     }
   }, [isOpen, prefilledData]);
 
   if (!isOpen || !mode) return null;
 
   const handleCreate = async () => {
-    const nameInput = document.getElementById('subject-name-input') as HTMLInputElement;
-    const descInput = document.getElementById('subject-description-input') as HTMLTextAreaElement;
-    
-    const name = nameInput?.value.trim();
-    const description = descInput?.value.trim();
+    const name = subjectName.trim();
+    const description = subjectDescription.trim();
     const uploadedImages = (window as any).tempSubjectImages || [];
     const selectedGeneratedImage = selectedImage ? [selectedImage] : [];
     const allImages = [...uploadedImages, ...selectedGeneratedImage];
@@ -112,8 +107,7 @@ export const SubjectCreationModal: React.FC<SubjectCreationModalProps> = ({
   };
 
   const handleGenerateImage = async () => {
-    const descInput = document.getElementById('subject-description-input') as HTMLTextAreaElement;
-    const description = descInput?.value.trim();
+    const description = subjectDescription.trim();
     
     if (!description) {
       showToast('请先填写主体描述');
@@ -238,12 +232,16 @@ export const SubjectCreationModal: React.FC<SubjectCreationModalProps> = ({
             placeholder="主体名称"
             className="subject-name-input"
             id="subject-name-input"
+            value={subjectName}
+            onChange={(e) => setSubjectName(e.target.value)}
           />
           <textarea
             placeholder="主体描述（提示词）"
             rows={3}
             className="subject-description-input"
             id="subject-description-input"
+            value={subjectDescription}
+            onChange={(e) => setSubjectDescription(e.target.value)}
           />
           
           {/* React Select LoRA选择器 */}

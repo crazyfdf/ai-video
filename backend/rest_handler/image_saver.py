@@ -10,7 +10,7 @@ from backend.util.constant import image_dir, get_project_dir
 
 
 def save_image_to_temp():
-    """保存图片到temp/{project_name}/scene_descriptions文件夹"""
+    """保存图片到temp/{project_name}/image文件夹"""
     try:
         data = request.json
         if not data or "index" not in data or "imageUrl" not in data:
@@ -23,8 +23,8 @@ def save_image_to_temp():
         if not project_name:
             return jsonify({"error": "No project selected"}), 400
 
-        # 创建项目专用的scene_descriptions目录
-        project_image_dir = get_project_dir(project_name, "scene_descriptions")
+        # 创建项目专用的image目录
+        project_image_dir = get_project_dir(project_name, "image")
         os.makedirs(project_image_dir, exist_ok=True)
 
         # 判断是否为上传图片（需要下载保存）还是生成图片（只保存URL）
@@ -66,7 +66,7 @@ def save_image_to_temp():
                 
                 image_info["filename"] = image_filename
                 image_info["file_size"] = len(response.content)
-                image_info["local_path"] = f"/temp/{project_name}/scene_descriptions/{image_filename}"
+                image_info["local_path"] = f"/temp/{project_name}/image/{image_filename}"
                 
             except requests.RequestException as e:
                 logging.error(f"Error downloading image: {e}")
@@ -118,7 +118,7 @@ def save_image_to_temp():
 def update_image_index(index, info_data, project_name=None):
     """更新图片索引文件"""
     try:
-        project_image_dir = get_project_dir(project_name, "scene_descriptions")
+        project_image_dir = get_project_dir(project_name, "image")
         index_path = os.path.join(project_image_dir, "image_index.json")
 
         # 读取现有索引
@@ -138,13 +138,13 @@ def update_image_index(index, info_data, project_name=None):
 
 
 def load_images_from_temp():
-    """从temp/{project_name}/scene_descriptions文件夹加载图片信息"""
+    """从temp/{project_name}/image文件夹加载图片信息"""
     try:
         # 从查询参数获取项目名称，兼容 projectName 和 project_name
         project_name = request.args.get('projectName') or request.args.get('project_name')
         if not project_name:
             return jsonify({"error": "No project selected"}), 400
-        project_image_dir = get_project_dir(project_name, "scene_descriptions")
+        project_image_dir = get_project_dir(project_name, "image")
         index_path = os.path.join(project_image_dir, "image_index.json")
 
         if not os.path.exists(index_path):
@@ -153,13 +153,13 @@ def load_images_from_temp():
         with open(index_path, "r", encoding="utf-8") as f:
             image_index = json.load(f)
 
-        # 构建返回数据，包含本地路径（指向 /temp/{project_name}/scene_descriptions）
+        # 构建返回数据，包含本地路径（指向 /temp/{project_name}/image）
         result = {}
         images_data = image_index.get("images", image_index)  # 兼容新旧格式
         for index, info in images_data.items():
             result[index] = {
                 "filename": info.get("filename"),
-                "local_path": info.get("local_path", f"/temp/{project_name}/scene_descriptions/{info.get('filename', '')}"),
+                "local_path": info.get("local_path", f"/temp/{project_name}/image/{info.get('filename', '')}"),
                 "description": info.get("description", ""),
                 "saved_at": info.get("saved_at", ""),
                 "file_size": info.get("file_size", 0),

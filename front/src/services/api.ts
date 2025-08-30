@@ -54,26 +54,26 @@ export class APIService {
     }
   }
 
-  // 加载场景描述
+  // 加载分镜描述
   static async loadSceneDescriptions() {
     const projectName = (window as any).currentProjectName || '猛鬼世界';
-    const response = await fetch(`${BASE_URL}/api/load/scene/descriptions?project_name=${encodeURIComponent(projectName)}`);
+    const response = await fetch(`${BASE_URL}/api/load/storyboard/descriptions?project_name=${encodeURIComponent(projectName)}`);
     if (response.ok) {
       return response.json();
     }
     return [];
   }
 
-  // 保存场景描述
+  // 保存分镜描述
   static async saveSceneDescriptions(descriptions: string[]) {
     const projectName = (window as any).currentProjectName || '猛鬼世界';
-    const response = await fetch(`${BASE_URL}/api/save/scene/descriptions`, {
+    const response = await fetch(`${BASE_URL}/api/save/storyboard/descriptions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ descriptions, projectName }),
     });
     if (!response.ok) {
-      throw new Error('Failed to save scene descriptions');
+      throw new Error('Failed to save storyboard descriptions');
     }
   }
 
@@ -303,7 +303,11 @@ export class APIService {
 
   // 加载图片
   static async loadImages() {
-    const response = await fetch(`${BASE_URL}/api/load/images`);
+    const projectName = (window as any).currentProjectName;
+    if (!projectName) {
+      return {};
+    }
+    const response = await fetch(`${BASE_URL}/api/load/images?projectName=${encodeURIComponent(projectName)}`);
     if (response.ok) {
       return response.json();
     }
@@ -363,7 +367,12 @@ export class APIService {
   // 加载视频数据
   static async loadVideoData() {
     try {
-      const response = await fetch(`${BASE_URL}/api/load/video/data`);
+      const projectName = (window as any).currentProjectName;
+      if (!projectName) {
+        console.log('No project selected for video data loading');
+        return null;
+      }
+      const response = await fetch(`${BASE_URL}/api/load/video/data?project_name=${encodeURIComponent(projectName)}`);
       if (response.ok) {
         return response.json();
       }
@@ -454,6 +463,36 @@ export class APIService {
     });
     if (!response.ok) {
       throw new Error('Failed to save character image');
+    }
+  }
+
+  // 更新单个scene文件
+  static async updateScene(sceneIndex: number, sceneData: any) {
+    try {
+      const projectName = (window as any).currentProjectName;
+      if (!projectName) {
+        throw new Error('Project name is required');
+      }
+      
+      const response = await fetch(`${BASE_URL}/api/update/scene/file`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectName,
+          sceneIndex,
+          imageUrl: sceneData.images?.[0],
+          generationInfo: sceneData.generation_info
+        }),
+      });
+      
+      if (!response.ok) {
+        throw new Error(`Failed to update scene ${sceneIndex}`);
+      }
+      
+      return response.json();
+    } catch (error) {
+      console.error(`Error updating scene ${sceneIndex}:`, error);
+      throw error;
     }
   }
 
@@ -727,7 +766,12 @@ export class APIService {
   // 加载保存的图片
   static async loadSavedImages(): Promise<any[]> {
     try {
-      const response = await fetch(`${BASE_URL}/api/load/images`);
+      const projectName = (window as any).currentProjectName;
+      if (!projectName) {
+        console.log('No project selected for images loading');
+        return [];
+      }
+      const response = await fetch(`${BASE_URL}/api/load/images?projectName=${encodeURIComponent(projectName)}`);
       if (response.ok) {
         const data = await response.json();
         console.log('Images loaded from backend:', data);

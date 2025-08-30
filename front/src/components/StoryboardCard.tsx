@@ -212,21 +212,46 @@ export const StoryboardCard: React.FC<StoryboardCardProps> = ({
               />
             </div>
             <div className="scene-image-container">
-              {sceneImages[index] ? (
-                <Image
-                  src={safeImageUrl(sceneImages[index])}
-                  alt={`Scene ${index + 1}`}
-                  width={120}
-                  height={120}
-                  className="required-scene-image"
-                  onClick={() => onPreviewImage(sceneImages[index])}
-                  style={{ cursor: 'pointer' }}
-                />
-              ) : (
-                <div className="scene-placeholder">
-                  <div className="placeholder-text">场景图片</div>
-                </div>
-              )}
+              {(() => {
+                // 根据所需场景主体查找对应的场景图片
+                const requiredSceneSubjects = requiredElements?.scene_subjects || [];
+                if (requiredSceneSubjects.length > 0) {
+                  // 获取第一个场景主体的名称（去掉@符号）
+                  const sceneSubjectName = requiredSceneSubjects[0].replace('@', '');
+                  // 从props中的sceneSubjects数组中查找对应的场景主体
+                  // 同时匹配name和originalName字段，以支持中英文名称
+                  const sceneSubject = sceneSubjects?.find((subject: any) => 
+                    subject.name === sceneSubjectName || subject.originalName === sceneSubjectName
+                  );
+                  // 兼容images中既可能是字符串，也可能是对象（{ image_url/local_url })
+                  const rawImage = (sceneSubject?.images?.[0] ?? sceneSubject?.subjectImages?.[0] ?? sceneSubject?.image_url ?? sceneSubject?.photo) as any;
+                  const sceneImageUrl: string = typeof rawImage === 'string' 
+                    ? rawImage 
+                    : (rawImage?.image_url || rawImage?.local_url || '');
+                  
+                  if (sceneImageUrl) {
+                    const url = safeImageUrl(sceneImageUrl);
+                    return (
+                      <Image
+                        src={url}
+                        alt={`Scene: ${sceneSubjectName}`}
+                        width={120}
+                        height={120}
+                        className="required-scene-image"
+                        onClick={() => onPreviewImage(sceneImageUrl)}
+                        style={{ cursor: 'pointer' }}
+                      />
+                    );
+                  }
+                }
+                
+                // 如果没有找到场景主体图片，显示占位符
+                return (
+                  <div className="scene-placeholder">
+                    <div className="placeholder-text">场景图片</div>
+                  </div>
+                );
+              })()}
             </div>
           </div>
 
@@ -375,8 +400,8 @@ export const StoryboardCard: React.FC<StoryboardCardProps> = ({
                     <div className="subject-info">
                       <input
                         type="text"
-                        value={subject.name || ''}
-                        onChange={(e) => onSceneSubjectChange?.(index, subjectIndex, 'name', e.target.value)}
+                        value={subject.originalName || subject.name || ''}
+                        onChange={(e) => onSceneSubjectChange?.(index, subjectIndex, 'originalName', e.target.value)}
                         placeholder="场景主体名称"
                         className="subject-name-input"
                       />
@@ -388,19 +413,30 @@ export const StoryboardCard: React.FC<StoryboardCardProps> = ({
                         className="subject-description-input"
                       />
                     </div>
-                    {subject.imageUrl && (
-                      <div className="subject-image">
-                        <Image
-                          src={safeImageUrl(subject.imageUrl)}
-                          alt={subject.name}
-                          width={60}
-                          height={60}
-                          className="subject-thumbnail"
-                          onClick={() => onPreviewImage(subject.imageUrl)}
-                          style={{ cursor: 'pointer' }}
-                        />
-                      </div>
-                    )}
+                    {(() => {
+                      // 兼容多种图片字段格式
+                      const rawImage = (subject?.images?.[0] ?? subject?.subjectImages?.[0] ?? subject?.imageUrl ?? subject?.image_url ?? subject?.photo) as any;
+                      const imageUrl: string = typeof rawImage === 'string' 
+                        ? rawImage 
+                        : (rawImage?.image_url || rawImage?.local_url || '');
+                      
+                      if (imageUrl) {
+                        return (
+                          <div className="subject-image">
+                            <Image
+                              src={safeImageUrl(imageUrl)}
+                              alt={subject.name}
+                              width={60}
+                              height={60}
+                              className="subject-thumbnail"
+                              onClick={() => onPreviewImage(imageUrl)}
+                              style={{ cursor: 'pointer' }}
+                            />
+                          </div>
+                        );
+                      }
+                      return null;
+                    })()}
                   </div>
                 ))
               ) : (
@@ -450,9 +486,9 @@ export const StoryboardCard: React.FC<StoryboardCardProps> = ({
         </div>
       </div>
 
-      {/* 生成图片 */}
+      {/* 分镜图片 */}
       <div className="image-section">
-        <h3>生成图片 {index + 1}</h3>
+        <h3>分镜图片 {index + 1}</h3>
         
         <div className="final-prompt-container">
           <h4>画面提示词:</h4>
@@ -561,9 +597,9 @@ export const StoryboardCard: React.FC<StoryboardCardProps> = ({
         {/* LoRA信息显示已移除 - 简化界面 */}
       </div>
 
-      {/* 生成视频 */}
+      {/* 分镜视频 */}
       <div className="video-section">
-        <h3>生成视频 {index + 1}</h3>
+        <h3>分镜视频 {index + 1}</h3>
         
         <div className="video-prompt-container">
           <h4>视频提示词:</h4>

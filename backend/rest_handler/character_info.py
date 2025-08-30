@@ -97,20 +97,20 @@ def load_character_info():
         
         # 加载所有individual角色文件
         characters = []
-        i = 0
-        while True:
-            char_file_path = os.path.join(project_character_dir, f"character_{i}.json")
-            if not os.path.exists(char_file_path):
-                break
-            
-            try:
-                with open(char_file_path, "r", encoding="utf-8") as f:
-                    character_data = json.load(f)
-                    characters.append(character_data)
-                i += 1
-            except Exception as char_error:
-                logging.warning(f"Error loading character_{i}.json: {char_error}")
-                break
+        
+        # 检查目录是否存在
+        if os.path.exists(project_character_dir):
+            # 遍历目录中的所有JSON文件
+            for filename in os.listdir(project_character_dir):
+                if filename.endswith('.json'):
+                    char_file_path = os.path.join(project_character_dir, filename)
+                    try:
+                        with open(char_file_path, "r", encoding="utf-8") as f:
+                            character_data = json.load(f)
+                            characters.append(character_data)
+                    except Exception as char_error:
+                        logging.warning(f"Error loading {filename}: {char_error}")
+                        continue
         
         # 构建完整的数据结构
         data = {
